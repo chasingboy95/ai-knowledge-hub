@@ -3,6 +3,8 @@
 > 面向企业内部团队的多租户 AI 知识库 SaaS。
 >
 > 当前状态：架构与需求设计阶段，尚未开始实现。
+>
+> 以上状态描述为初始设计基线；当前 Phase 1 backend 已实现并通过测试，整体 AI 知识库/RAG 仍在设计阶段。
 
 Phase 1 执行计划：[2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
 

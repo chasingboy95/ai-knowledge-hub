@@ -39,10 +39,12 @@ async def create_organization(db: AsyncSession, user: User, name: str, slug: str
 
 
 async def create_invitation(db: AsyncSession, organization_id: UUID, user: User, email: str, role_code: str):
-    await authorize_membership(db, user.id, organization_id, "member:invite")
+    actor_membership = await authorize_membership(db, user.id, organization_id, "member:invite")
     role_code = role_code.upper()
     if role_code not in VALID_ROLES:
         raise HTTPException(status_code=422, detail="Invalid role")
+    if role_code == "OWNER" and actor_membership.role.code != "OWNER":
+        raise HTTPException(status_code=403, detail="Permission denied")
     await seed_rbac(db)
     role = await db.scalar(select(Role).where(Role.code == role_code))
     token = secrets.token_urlsafe(32)
@@ -98,13 +100,15 @@ async def remove_member(db: AsyncSession, organization_id: UUID, user_id: UUID, 
     )
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
-    await authorize_membership(db, actor_id, organization_id, "member:remove")
+    actor_membership = await authorize_membership(db, actor_id, organization_id, "member:remove")
     membership = await db.scalar(select(Membership).options(selectinload(Membership.role)).where(
         Membership.organization_id == organization_id, Membership.user_id == user_id
     ))
     if membership is None:
         raise HTTPException(status_code=404, detail="Member not found")
     if membership.role and membership.role.code == "OWNER":
+        if not actor_membership.role or actor_membership.role.code != "OWNER":
+            raise HTTPException(status_code=403, detail="Permission denied")
         if actor_id == user_id:
             raise HTTPException(status_code=409, detail="Owner cannot remove themselves")
         owner_count = await db.scalar(select(func.count()).select_from(Membership).join(Role).where(
