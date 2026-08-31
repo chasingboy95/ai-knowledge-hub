@@ -3,12 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.app.core.config import get_settings
+from backend.app.db.session import dispose_engine
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     get_settings()
-    yield
+    try:
+        yield
+    finally:
+        await dispose_engine()
 
 
 app = FastAPI(
