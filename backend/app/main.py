@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from backend.app.core.config import get_settings
 from backend.app.db.session import dispose_engine
+from backend.app.api.router import api_router
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(api_router)
 
 
 @app.get("/health")
