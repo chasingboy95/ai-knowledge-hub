@@ -515,3 +515,67 @@ Docker
 4. 首期 LLM 和 Embedding 服务提供商及模型。
 5. UI 组件库选型。
 6. 是否需要邮箱发送服务来支持成员邀请和 Refresh Token 撤销策略。
+
+## 7. Phase 1 已验证实现
+
+本节补充当前工作树中已通过测试验证的实际状态；前文保留项目原始知识库与目标设计。
+
+### 实际目录
+
+- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型和数据库会话。
+- `backend/alembic`：Alembic 迁移脚本。
+- `tests`：数据库、认证、租户隔离、RBAC、业务 API、Compose 和 API 合约测试。
+- `compose.yaml`、`Dockerfile`、`.env.example`：本地容器开发配置。
+
+### 启动与迁移命令
+
+要求：Python 3.12、`uv` 和 Docker Compose。
+
+```bash
+cp .env.example .env
+uv sync
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run uvicorn backend.app.main:app --reload
+```
+
+使用容器启动 API 时，迁移单独显式执行：
+
+```bash
+docker compose up -d postgres
+docker compose run --rm api uv run alembic upgrade head
+docker compose up --build -d api
+```
+
+可检查健康与 OpenAPI：
+
+```bash
+curl -f http://localhost:8000/health
+curl -f http://localhost:8000/openapi.json
+```
+
+### 测试命令
+
+```bash
+uv run pytest -q
+uv run pytest tests/test_api_contract.py -q
+git diff --check
+```
+
+### 当前完成项
+
+- FastAPI 应用骨架、PostgreSQL Schema、Alembic 迁移和 Docker Compose 配置。
+- 用户注册、登录、Profile、Logout、JWT Access Token、Refresh Token 轮换与撤销。
+- Organization、Membership、邀请、Workspace 和 OWNER/ADMIN/EDITOR/VIEWER RBAC。
+- JWT 用户到 Membership 的租户隔离、跨租户拒绝和越权拒绝。
+- 所有业务 API 使用 `/api/v1`；`/health` 保持 200，OpenAPI 可生成。
+- 401、403、404、409、422 统一返回 `{"error":{"code":"...","message":"..."}}`；未预期异常不泄露内部细节。
+- 成功响应使用公开 response model，不暴露 `password_hash`、Refresh Token 哈希或邀请 Token 哈希。
+
+### 尚未实现项
+
+- OAuth 2.0 / OIDC 登录。
+- 知识库、文档上传/解析/切块、向量化和检索。
+- Secure RAG、权限感知检索、LLM 问答和引用来源。
+- Agent、工具调用和外部业务系统集成。
+- React SaaS UI、审计查询、生产部署和进一步安全加固。

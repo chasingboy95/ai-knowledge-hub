@@ -45,7 +45,7 @@ async def refresh(data: RefreshRequest, session: AsyncSession = Depends(get_db_s
     return token_response(access_token, refresh_token, settings)
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 async def logout(data: RefreshRequest, session: AsyncSession = Depends(get_db_session)) -> Response:
     await revoke_refresh_token(session, data.refresh_token)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

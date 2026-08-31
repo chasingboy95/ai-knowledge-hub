@@ -41,7 +41,7 @@ async def update(organization_id: UUID, workspace_id: UUID, data: WorkspaceUpdat
     return await update_workspace(db, user.id, organization_id, workspace_id, data.name, data.slug)
 
 
-@router.delete("/{organization_id}/workspaces/{workspace_id}", status_code=204)
+@router.delete("/{organization_id}/workspaces/{workspace_id}", response_model=None, status_code=204)
 async def delete(organization_id: UUID, workspace_id: UUID, user: User = Depends(get_current_user), _: Membership = Depends(require_permission("workspace:delete")), db: AsyncSession = Depends(get_db_session)):
     await delete_workspace(db, user.id, organization_id, workspace_id)
     return Response(status_code=204)

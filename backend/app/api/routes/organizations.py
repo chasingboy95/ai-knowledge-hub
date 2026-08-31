@@ -51,7 +51,7 @@ async def members(organization_id: UUID, _: Membership = Depends(require_permiss
     return [{"id": m.id, "user_id": m.user_id, "organization_id": m.organization_id, "email": m.user.email, "full_name": m.user.full_name, "role": m.role.code if m.role else ""} for m in values]
 
 
-@router.delete("/{organization_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{organization_id}/members/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 async def remove(organization_id: UUID, user_id: UUID, current_user: User = Depends(get_current_user), _: Membership = Depends(require_permission("member:remove")), db: AsyncSession = Depends(get_db_session)):
     await remove_member(db, organization_id, user_id, current_user.id)
 
