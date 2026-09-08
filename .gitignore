@@ -13,4 +13,3 @@ build/
 
 postgres_data/
 *.log
-/knowledge-base
