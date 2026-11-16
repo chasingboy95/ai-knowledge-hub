@@ -8,6 +8,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.models.organization import Membership
 from backend.app.models.user import User
 from backend.app.schemas.document import DocumentDetailResponse, DocumentResponse
+from backend.app.services.audit import record_audit_log
 from backend.app.services.knowledge import (
     create_document,
     delete_document,
@@ -15,14 +16,13 @@ from backend.app.services.knowledge import (
     list_documents,
 )
 from backend.app.services.pipeline.document_pipeline import DocumentPipelineService, get_default_pipeline
-from backend.app.services.storage.base import StorageService
-from backend.app.services.storage.local import LocalStorageService
+from backend.app.services.storage import StorageService, get_storage_service
 
 router = APIRouter()
 
 
 def get_storage(settings: Settings = Depends(get_settings)) -> StorageService:
-    return LocalStorageService(base_dir=settings.storage_dir)
+    return get_storage_service(settings)
 
 
 def get_pipeline(settings: Settings = Depends(get_settings)) -> DocumentPipelineService:
@@ -64,6 +64,17 @@ async def upload(
         filename=file.filename,
         file_bytes=file_bytes,
         mime_type=mime_type,
+    )
+
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="DOCUMENT_UPLOAD",
+        resource_type="document",
+        resource_id=str(doc.id),
+        payload={"filename": file.filename, "size_bytes": len(file_bytes), "mime_type": mime_type},
     )
 
     background_tasks.add_task(pipeline.process_document, doc.id)
@@ -144,5 +155,14 @@ async def delete_doc(
         kb_id=kb_id,
         document_id=document_id,
         vector_store=pipeline.get_vector_store(db),
+    )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="DOCUMENT_DELETE",
+        resource_type="document",
+        resource_id=str(document_id),
     )
     return Response(status_code=204)

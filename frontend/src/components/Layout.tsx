@@ -10,6 +10,7 @@ import {
   Building2,
   ChevronDown,
   Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
@@ -154,6 +155,20 @@ export const Layout: React.FC = () => {
             >
               <Users className="w-4 h-4" />
               <span>成员与权限</span>
+            </NavLink>
+
+            <NavLink
+              to="/audit"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-orange-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`
+              }
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>安全审计日志</span>
             </NavLink>
           </nav>
         </div>

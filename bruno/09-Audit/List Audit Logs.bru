@@ -1,0 +1,21 @@
+meta {
+  name: List Audit Logs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/audit-logs
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~limit: 50
+  ~offset: 0
+  ~event_type: AUTH_LOGIN
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -12,6 +12,7 @@ from backend.app.api.router import api_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    get_settings.cache_clear()
     get_settings()
     try:
         yield

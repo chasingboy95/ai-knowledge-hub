@@ -10,6 +10,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.models.organization import Membership, Organization
 from backend.app.models.user import User
 from backend.app.schemas.organization import InvitationAcceptResponse, InvitationCreate, InvitationResponse, MemberResponse, OrganizationCreate, OrganizationResponse
+from backend.app.services.audit import record_audit_log
 from backend.app.services.organizations import accept_invitation, create_invitation, create_organization, remove_member
 
 router = APIRouter()
@@ -39,6 +40,15 @@ async def get_organization(organization_id: UUID, _: Membership = Depends(requir
 @router.post("/{organization_id}/invitations", response_model=InvitationResponse, response_model_exclude_none=True, status_code=201)
 async def invite(organization_id: UUID, data: InvitationCreate, _: Membership = Depends(require_permission("member:invite")), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session), settings: Settings = Depends(get_settings)):
     invitation, token = await create_invitation(db, organization_id, user, data.email, data.role)
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        user_id=user.id,
+        event_type="MEMBER_INVITE",
+        resource_type="invitation",
+        resource_id=str(invitation.id),
+        payload={"email": data.email, "role": data.role},
+    )
     response = {"invitation_id": invitation.id}
     if settings.environment == "development":
         response["invite_token"] = token
@@ -54,6 +64,14 @@ async def members(organization_id: UUID, _: Membership = Depends(require_permiss
 @router.delete("/{organization_id}/members/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 async def remove(organization_id: UUID, user_id: UUID, current_user: User = Depends(get_current_user), _: Membership = Depends(require_permission("member:remove")), db: AsyncSession = Depends(get_db_session)):
     await remove_member(db, organization_id, user_id, current_user.id)
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        event_type="MEMBER_REMOVE",
+        resource_type="user",
+        resource_id=str(user_id),
+    )
 
 
 @invitation_router.post("/invitations/{token}/accept", response_model=InvitationAcceptResponse, status_code=201)

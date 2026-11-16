@@ -18,6 +18,7 @@ from backend.app.schemas.chat import (
     ChatStreamChunk,
 )
 from backend.app.services.agent import AgentRunner, get_agent_runner
+from backend.app.services.audit import record_audit_log
 from backend.app.services.rag import RAGService, get_rag_service
 
 router = APIRouter()
@@ -148,6 +149,21 @@ async def stream_chat_message(
     rag_service: RAGService = Depends(get_rag),
     agent_runner: AgentRunner = Depends(get_agent),
 ):
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=current_user.id,
+        event_type="AGENT_TOOL_CALL" if payload.enable_agent else "RAG_QUERY",
+        resource_type="chat_session",
+        resource_id=str(session_id),
+        payload={
+            "enable_agent": payload.enable_agent,
+            "prompt_length": len(payload.content),
+            "top_k": payload.top_k,
+        },
+    )
+
     async def event_generator() -> AsyncGenerator[str, None]:
         if payload.enable_agent:
             session = await rag_service.get_session(db, workspace_id, session_id)

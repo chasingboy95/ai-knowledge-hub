@@ -1,3 +1,4 @@
+from backend.app.models.audit import AuditLog
 from backend.app.models.chat import ChatMessage, ChatSession, MessageRole
 from backend.app.models.document import Document, DocumentChunk, DocumentStatus
 from backend.app.models.knowledge import KnowledgeBase
@@ -7,6 +8,7 @@ from backend.app.models.user import RefreshToken, User
 from backend.app.models.workspace import Workspace
 
 __all__ = [
+    "AuditLog",
     "ChatMessage",
     "ChatSession",
     "Document",

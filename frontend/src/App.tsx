@@ -9,6 +9,7 @@ import { KnowledgeBases } from './pages/KnowledgeBases';
 import { KnowledgeBaseDetail } from './pages/KnowledgeBaseDetail';
 import { Chat } from './pages/Chat';
 import { Members } from './pages/Members';
+import { AuditLogs } from './pages/AuditLogs';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, isLoading } = useAuth();
@@ -54,6 +55,7 @@ export function App() {
             <Route path="knowledge-bases/:id" element={<KnowledgeBaseDetail />} />
             <Route path="chat" element={<Chat />} />
             <Route path="members" element={<Members />} />
+            <Route path="audit" element={<AuditLogs />} />
           </Route>
 
           {/* Catch-all */}

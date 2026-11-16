@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from backend.app.api.errors import ERROR_RESPONSES
-from backend.app.api.routes import auth, chat, documents, knowledge_bases, organizations, users, workspaces
+from backend.app.api.routes import audit, auth, chat, documents, knowledge_bases, organizations, users, workspaces
 
 api_router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -12,3 +12,4 @@ api_router.include_router(workspaces.router, prefix="/organizations", tags=["wor
 api_router.include_router(knowledge_bases.router, prefix="/organizations", tags=["knowledge-bases"])
 api_router.include_router(documents.router, prefix="/organizations", tags=["documents"])
 api_router.include_router(chat.router, prefix="/organizations", tags=["chat"])
+api_router.include_router(audit.router, prefix="/organizations", tags=["audit"])
