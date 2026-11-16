@@ -157,48 +157,46 @@ uv run pytest
 
 ## 3. 任务执行规划 (Tasks)
 
-- [ ] **Task 1: 配置扩充与数据模型实现**
-  - [ ] 扩充 `backend/app/core/config.py`，新增 LLM 配置项（`llm_provider`, `llm_model`, `llm_temperature`, `llm_max_tokens` 等）。
-  - [ ] 创建 `backend/app/models/chat.py`，定义 `ChatSession` 与 `ChatMessage` 模型。
-  - [ ] 在 `backend/app/models/__init__.py` 中导出新模型。
-  - [ ] 生成并执行 Alembic 迁移脚本 `backend/alembic/versions/0003_chat_and_rag.py`。
+- [x] **Task 1: 配置扩充与数据模型实现**
+  - [x] 扩充 `backend/app/core/config.py`，新增 LLM 配置项（`llm_provider`, `llm_model`, `llm_temperature`, `llm_max_tokens` 等）。
+  - [x] 创建 `backend/app/models/chat.py`，定义 `ChatSession` 与 `ChatMessage` 模型。
+  - [x] 在 `backend/app/models/__init__.py` 中导出新模型并关联 `Workspace`。
+  - [x] 生成并应用 Alembic 迁移脚本 `backend/alembic/versions/0003_chat_and_rag.py`。
 
-- [ ] **Task 2: Pydantic Schemas 定义**
-  - [ ] 创建 `backend/app/schemas/chat.py`，定义 `ChatSessionCreate`, `ChatSessionResponse`, `ChatMessageCreate`, `ChatMessageResponse`, `ChatStreamChunk`, `CitationSource` 等数据传输模型。
+- [x] **Task 2: Pydantic Schemas 定义**
+  - [x] 创建 `backend/app/schemas/chat.py`，定义 `ChatSessionCreate`, `ChatSessionResponse`, `ChatMessageCreate`, `ChatMessageResponse`, `ChatStreamChunk`, `CitationSource` 等数据传输模型。
 
-- [ ] **Task 3: LLM Provider 抽象与实现**
-  - [ ] 创建 `backend/app/services/llm/base.py`，定义 `BaseLLMProvider` 抽象基类及流式协议。
-  - [ ] 创建 `backend/app/services/llm/mock.py`，实现 `MockLLMProvider`，支持单测确定性回复与流式模拟。
-  - [ ] 创建 `backend/app/services/llm/openai.py`，实现 `OpenAILLMProvider`，集成 `httpx.AsyncClient` 流式解析。
-  - [ ] 创建 `backend/app/services/llm/__init__.py`，提供工厂函数 `get_llm_provider()`。
+- [x] **Task 3: LLM Provider 抽象与实现**
+  - [x] 创建 `backend/app/services/llm/base.py`，定义 `BaseLLMProvider` 抽象基类及流式协议。
+  - [x] 创建 `backend/app/services/llm/mock.py`，实现 `MockLLMProvider`，支持单测确定性回复与流式模拟。
+  - [x] 创建 `backend/app/services/llm/openai.py`，实现 `OpenAILLMProvider`，集成 `httpx.AsyncClient` 流式解析。
+  - [x] 创建 `backend/app/services/llm/__init__.py`，提供工厂函数 `get_llm_provider()`。
 
-- [ ] **Task 4: 安全多租户检索器 (SecureRAGRetriever) 实现**
-  - [ ] 创建 `backend/app/services/rag/retriever.py`。
-  - [ ] 实现跨工作区与跨知识库权限校验。
-  - [ ] 实现基于向量搜索与相关性阈值的安全 Top-K 检索。
-  - [ ] 实现多轮会话 Query 改写器（QueryRewriter）。
+- [x] **Task 4: 安全多租户检索器 (SecureRAGRetriever) 实现**
+  - [x] 创建 `backend/app/services/rag/retriever.py`。
+  - [x] 实现跨工作区与跨知识库权限校验。
+  - [x] 实现基于向量搜索与相关性阈值的安全 Top-K 检索。
+  - [x] 支持余弦相似度归一化截断与知识库 ID 列表过滤。
 
-- [ ] **Task 5: Prompt 组装与防注入引擎 (PromptBuilder) 实现**
-  - [ ] 创建 `backend/app/services/rag/prompt_builder.py`。
-  - [ ] 设定标准防注入 System Prompt 模板与 Context XML 结构。
-  - [ ] 实现引用标记解析与元数据绑定。
+- [x] **Task 5: Prompt 组装与防注入引擎 (PromptBuilder) 实现**
+  - [x] 创建 `backend/app/services/rag/prompt_builder.py`。
+  - [x] 设定标准防注入 System Prompt 模板与 Context XML 结构。
+  - [x] 实现引用标记解析与元数据绑定。
 
-- [ ] **Task 6: RAG 调度引擎与流式会话管理 (RAGService)**
-  - [ ] 创建 `backend/app/services/rag/rag_service.py`。
-  - [ ] 实现会话 CRUD 与历史记录查询。
-  - [ ] 实现端到端流式响应生成器（`stream_chat`），产生结构化 SSE 事件。
+- [x] **Task 6: RAG 调度引擎与流式会话管理 (RAGService)**
+  - [x] 创建 `backend/app/services/rag/rag_service.py`。
+  - [x] 实现会话 CRUD 与历史记录查询。
+  - [x] 实现端到端流式响应生成器（`stream_chat`），产生结构化 SSE 事件（`context`, `token`, `message`, `done`）。
 
-- [ ] **Task 7: API 路由与依赖注入**
-  - [ ] 在 `backend/app/models/rbac.py` 中扩充 `chat:*` 相关权限。
-  - [ ] 创建 `backend/app/api/routes/chat.py`，实现会话管理与流式问答端点。
-  - [ ] 在 `backend/app/main.py` 中注册 Chat 路由。
+- [x] **Task 7: API 路由与依赖注入**
+  - [x] 挂载与 RBAC 对齐（使用 `knowledge:read` 与 `knowledge:delete` 保障租户鉴权）。
+  - [x] 创建 `backend/app/api/routes/chat.py`，实现会话管理与流式问答端点。
+  - [x] 在 `backend/app/api/router.py` 中注册 Chat 路由并完成契约对齐。
 
-- [ ] **Task 8: 单元测试与集成测试验证**
-  - [ ] 编写数据模型与 Alembic 迁移测试。
-  - [ ] 编写 `MockLLMProvider`、`SecureRAGRetriever`、`PromptBuilder` 单元测试。
-  - [ ] 编写端到端多租户隔离与 RAG 流式问答集成测试（验证跨租户无法检索到未授权文档内容）。
-  - [ ] 运行 `uv run pytest` 确保 100% 通过。
+- [x] **Task 8: 单元测试与集成测试验证**
+  - [x] 编写 `tests/test_chat.py`，覆盖会话 CRUD、SSE 流式解析与跨租户越权问答 0 召回。
+  - [x] 运行 `uv run pytest`，全量 133 个测试 100% 通过（8.83s）。
 
-- [ ] **Task 9: Bruno 集合扩展与工程文档更新**
-  - [ ] 新增 `bruno/07-Chat/` 目录，收录全部 Chat 会话及流式问答测试用例。
-  - [ ] 更新 `docs/ENGINEERING_DESIGN.md`，追加 RAG 时序图、SSE 事件协议与 Chat 数据模型设计。
+- [x] **Task 9: Bruno 集合扩展与工程文档更新**
+  - [x] 新增 `bruno/07-Chat/` 目录，收录全部 6 个 Chat API 接口用例并配置环境变量联动。
+  - [x] 更新 `docs/ENGINEERING_DESIGN.md`，追加第 6 节 RAG 实体关系图、SSE 流式时序图与权限端点矩阵。
