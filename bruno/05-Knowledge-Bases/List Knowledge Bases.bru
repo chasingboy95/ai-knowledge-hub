@@ -1,0 +1,15 @@
+meta {
+  name: List Knowledge Bases
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

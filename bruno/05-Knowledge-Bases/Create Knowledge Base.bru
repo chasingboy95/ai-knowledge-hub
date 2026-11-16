@@ -1,0 +1,31 @@
+meta {
+  name: Create Knowledge Base
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Architecture Docs",
+    "slug": "arch-docs",
+    "description": "Technical documentation and architecture specs"
+  }
+}
+
+vars:post-response {
+  knowledgeBaseId: res.body.id
+}

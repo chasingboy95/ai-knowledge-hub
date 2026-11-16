@@ -1,0 +1,23 @@
+meta {
+  name: Upload Document
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases/{{knowledgeBaseId}}/documents
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:multipart-form {
+  file: @file()
+}
+
+vars:post-response {
+  documentId: res.body.id
+}

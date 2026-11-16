@@ -1,0 +1,26 @@
+meta {
+  name: Update Knowledge Base
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases/{{knowledgeBaseId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "System Architecture & Specs",
+    "description": "Updated tech specs and architecture RFCs"
+  }
+}

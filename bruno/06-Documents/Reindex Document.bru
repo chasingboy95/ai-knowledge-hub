@@ -1,0 +1,15 @@
+meta {
+  name: Reindex Document
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases/{{knowledgeBaseId}}/documents/{{documentId}}/reindex
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Delete Document
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/organizations/{{organizationId}}/workspaces/{{workspaceId}}/knowledge-bases/{{knowledgeBaseId}}/documents/{{documentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
