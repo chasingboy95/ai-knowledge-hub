@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.session import get_db_session
 from backend.app.models.organization import Membership
+from backend.app.models.user import User
 from backend.app.schemas.auth import Credentials, RefreshRequest, RegisterRequest, TokenResponse
 from backend.app.services.audit import record_audit_log
 from backend.app.services.auth import (
@@ -40,8 +41,8 @@ async def login(data: Credentials, session: AsyncSession = Depends(get_db_sessio
         raise HTTPException(status_code=401, detail="Invalid credentials")
     access_token, refresh_token = await issue_tokens(session, user, settings)
 
-    membership = await session.scalar(select(Membership).where(Membership.user_id == user.id))
-    if membership:
+    memberships = (await session.scalars(select(Membership).where(Membership.user_id == user.id))).all()
+    for membership in memberships:
         await record_audit_log(
             db=session,
             organization_id=membership.organization_id,

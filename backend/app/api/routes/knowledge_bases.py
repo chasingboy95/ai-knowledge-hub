@@ -12,6 +12,7 @@ from backend.app.schemas.knowledge import (
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
 )
+from backend.app.services.audit import record_audit_log
 from backend.app.services.knowledge import (
     create_knowledge_base,
     delete_knowledge_base,
@@ -38,7 +39,7 @@ async def create(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await create_knowledge_base(
+    kb = await create_knowledge_base(
         db=db,
         organization_id=organization_id,
         workspace_id=workspace_id,
@@ -47,6 +48,17 @@ async def create(
         slug=data.slug,
         description=data.description,
     )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="KNOWLEDGE_BASE_CREATE",
+        resource_type="knowledge_base",
+        resource_id=str(kb.id),
+        payload={"name": kb.name, "slug": kb.slug},
+    )
+    return kb
 
 
 @router.get(
@@ -89,7 +101,7 @@ async def update(
     _: Membership = Depends(require_permission("knowledge:update")),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await update_knowledge_base(
+    kb = await update_knowledge_base(
         db=db,
         user_id=user.id,
         organization_id=organization_id,
@@ -98,6 +110,17 @@ async def update(
         name=data.name,
         description=data.description,
     )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="KNOWLEDGE_BASE_UPDATE",
+        resource_type="knowledge_base",
+        resource_id=str(kb.id),
+        payload={"name": data.name, "description": data.description},
+    )
+    return kb
 
 
 @router.delete(
@@ -123,5 +146,14 @@ async def delete(
         kb_id=kb_id,
         storage=storage,
         vector_store=pipeline.get_vector_store(db),
+    )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="KNOWLEDGE_BASE_DELETE",
+        resource_type="knowledge_base",
+        resource_id=str(kb_id),
     )
     return Response(status_code=204)

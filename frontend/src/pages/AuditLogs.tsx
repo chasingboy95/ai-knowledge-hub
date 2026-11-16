@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Clock,
   User as UserIcon,
-  Globe,
   FileCode,
   Layers,
   Sparkles,
@@ -15,6 +14,10 @@ import {
   FileText,
   UserCheck,
   UserX,
+  Building2,
+  FolderPlus,
+  FolderMinus,
+  MessageSquare,
 } from 'lucide-react';
 
 interface AuditLog {
@@ -73,6 +76,48 @@ export const AuditLogs: React.FC = () => {
             <UserCheck className="w-3 h-3" /> 用户登录
           </span>
         );
+      case 'ORGANIZATION_CREATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+            <Building2 className="w-3 h-3" /> 创建组织
+          </span>
+        );
+      case 'WORKSPACE_CREATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-200">
+            <Layers className="w-3 h-3" /> 创建工作区
+          </span>
+        );
+      case 'WORKSPACE_UPDATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cyan-100 text-cyan-800 border border-cyan-200">
+            <Layers className="w-3 h-3" /> 更新工作区
+          </span>
+        );
+      case 'WORKSPACE_DELETE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+            <Layers className="w-3 h-3" /> 删除工作区
+          </span>
+        );
+      case 'KNOWLEDGE_BASE_CREATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">
+            <FolderPlus className="w-3 h-3" /> 创建知识库
+          </span>
+        );
+      case 'KNOWLEDGE_BASE_UPDATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+            <FolderPlus className="w-3 h-3" /> 更新知识库
+          </span>
+        );
+      case 'KNOWLEDGE_BASE_DELETE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200">
+            <FolderMinus className="w-3 h-3" /> 删除知识库
+          </span>
+        );
       case 'DOCUMENT_UPLOAD':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
@@ -83,6 +128,18 @@ export const AuditLogs: React.FC = () => {
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200">
             <FileText className="w-3 h-3" /> 删除文档
+          </span>
+        );
+      case 'CHAT_SESSION_CREATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800 border border-teal-200">
+            <MessageSquare className="w-3 h-3" /> 创建问答会话
+          </span>
+        );
+      case 'CHAT_SESSION_DELETE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-800 border border-slate-300">
+            <MessageSquare className="w-3 h-3" /> 删除问答会话
           </span>
         );
       case 'RAG_QUERY':
@@ -99,8 +156,14 @@ export const AuditLogs: React.FC = () => {
         );
       case 'MEMBER_INVITE':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-violet-100 text-violet-800 border border-violet-200">
             <UserCheck className="w-3 h-3" /> 邀请新成员
+          </span>
+        );
+      case 'MEMBER_ACCEPT_INVITE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <UserCheck className="w-3 h-3" /> 接受成员邀请
           </span>
         );
       case 'MEMBER_REMOVE':
@@ -144,11 +207,21 @@ export const AuditLogs: React.FC = () => {
             >
               <option value="">全部事件类型</option>
               <option value="AUTH_LOGIN">AUTH_LOGIN (用户登录)</option>
+              <option value="ORGANIZATION_CREATE">ORGANIZATION_CREATE (创建组织)</option>
+              <option value="WORKSPACE_CREATE">WORKSPACE_CREATE (创建工作区)</option>
+              <option value="WORKSPACE_UPDATE">WORKSPACE_UPDATE (更新工作区)</option>
+              <option value="WORKSPACE_DELETE">WORKSPACE_DELETE (删除工作区)</option>
+              <option value="KNOWLEDGE_BASE_CREATE">KNOWLEDGE_BASE_CREATE (创建知识库)</option>
+              <option value="KNOWLEDGE_BASE_UPDATE">KNOWLEDGE_BASE_UPDATE (更新知识库)</option>
+              <option value="KNOWLEDGE_BASE_DELETE">KNOWLEDGE_BASE_DELETE (删除知识库)</option>
               <option value="DOCUMENT_UPLOAD">DOCUMENT_UPLOAD (文档上传)</option>
               <option value="DOCUMENT_DELETE">DOCUMENT_DELETE (文档删除)</option>
+              <option value="CHAT_SESSION_CREATE">CHAT_SESSION_CREATE (创建问答会话)</option>
+              <option value="CHAT_SESSION_DELETE">CHAT_SESSION_DELETE (删除问答会话)</option>
               <option value="RAG_QUERY">RAG_QUERY (RAG 检索提问)</option>
               <option value="AGENT_TOOL_CALL">AGENT_TOOL_CALL (智能体工具调用)</option>
               <option value="MEMBER_INVITE">MEMBER_INVITE (邀请成员)</option>
+              <option value="MEMBER_ACCEPT_INVITE">MEMBER_ACCEPT_INVITE (接受邀请)</option>
               <option value="MEMBER_REMOVE">MEMBER_REMOVE (移除成员)</option>
             </select>
           </div>
@@ -198,34 +271,25 @@ export const AuditLogs: React.FC = () => {
                     <th className="px-6 py-3 text-right">参数载荷 (Payload)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 text-slate-600">
                   {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/70 transition">
-                      <td className="px-6 py-3.5 whitespace-nowrap text-slate-500 font-mono">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{new Date(log.created_at).toLocaleString()}</span>
-                        </div>
+                    <tr key={log.id} className="hover:bg-slate-50/80 transition">
+                      <td className="px-6 py-3.5 whitespace-nowrap text-slate-400 font-mono flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        {new Date(log.created_at).toLocaleString()}
                       </td>
                       <td className="px-6 py-3.5 whitespace-nowrap">{getEventBadge(log.event_type)}</td>
-                      <td className="px-6 py-3.5 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
+                      <td className="px-6 py-3.5 whitespace-nowrap font-medium text-slate-700">
+                        <div className="flex items-center gap-1.5">
                           <UserIcon className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="font-medium text-slate-800">
-                            {log.user_email || log.user_id || 'System'}
-                          </span>
+                          <span>{log.user_email || log.user_id || 'System'}</span>
                         </div>
-                        {log.ip_address && (
-                          <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5 font-mono">
-                            <Globe className="w-3 h-3 text-slate-400" />
-                            {log.ip_address}
-                          </div>
-                        )}
                       </td>
                       <td className="px-6 py-3.5 whitespace-nowrap">
                         {log.resource_type ? (
-                          <div className="font-mono text-slate-600">
-                            <span className="text-slate-400">{log.resource_type}:</span> {log.resource_id}
+                          <div className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            <span className="font-semibold text-slate-700">{log.resource_type}:</span>
+                            <span className="truncate max-w-[120px]">{log.resource_id}</span>
                           </div>
                         ) : (
                           <span className="text-slate-400">-</span>
@@ -235,13 +299,13 @@ export const AuditLogs: React.FC = () => {
                         {log.payload ? (
                           <button
                             onClick={() => setSelectedPayload(log.payload)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-[11px] transition"
+                            className="inline-flex items-center gap-1 text-[11px] text-orange-600 hover:text-orange-700 font-medium px-2 py-0.5 rounded hover:bg-orange-50 transition"
                           >
-                            <FileCode className="w-3.5 h-3.5 text-slate-500" />
-                            查看 JSON
+                            <FileCode className="w-3.5 h-3.5" />
+                            <span>查看 JSON</span>
                           </button>
                         ) : (
-                          <span className="text-slate-300">-</span>
+                          <span className="text-slate-400">-</span>
                         )}
                       </td>
                     </tr>
@@ -256,31 +320,21 @@ export const AuditLogs: React.FC = () => {
       {/* JSON Payload Modal */}
       {selectedPayload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <FileCode className="w-4 h-4 text-orange-600" />
                 审计事件载荷 (Audit Payload)
               </h3>
               <button
                 onClick={() => setSelectedPayload(null)}
-                className="text-slate-400 hover:text-slate-600 text-lg leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            <pre className="p-4 bg-slate-950 text-emerald-400 rounded-lg text-xs font-mono overflow-auto max-h-96 leading-relaxed">
-              {JSON.stringify(selectedPayload, null, 2)}
-            </pre>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setSelectedPayload(null)}
-                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold hover:bg-slate-800 transition"
+                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded"
               >
                 关闭
               </button>
+            </div>
+            <div className="bg-slate-900 rounded-lg p-4 font-mono text-xs text-orange-400 overflow-x-auto max-h-96">
+              <pre>{JSON.stringify(selectedPayload, null, 2)}</pre>
             </div>
           </div>
         </div>

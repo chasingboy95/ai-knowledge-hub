@@ -46,12 +46,23 @@ async def create_chat_session(
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
 ):
-    return await rag_service.create_session(
+    session = await rag_service.create_session(
         db=db,
         workspace_id=workspace_id,
         user_id=current_user.id,
         title=payload.title,
     )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=current_user.id,
+        event_type="CHAT_SESSION_CREATE",
+        resource_type="chat_session",
+        resource_id=str(session.id),
+        payload={"title": session.title},
+    )
+    return session
 
 
 @router.get(
@@ -104,6 +115,7 @@ async def delete_chat_session(
     workspace_id: UUID,
     session_id: UUID,
     _: Membership = Depends(require_permission("knowledge:delete")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
 ):
@@ -111,6 +123,15 @@ async def delete_chat_session(
         db=db,
         workspace_id=workspace_id,
         session_id=session_id,
+    )
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        event_type="CHAT_SESSION_DELETE",
+        resource_type="chat_session",
+        resource_id=str(session_id),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

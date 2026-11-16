@@ -19,7 +19,17 @@ invitation_router = APIRouter()
 
 @router.post("", response_model=OrganizationResponse, status_code=201)
 async def create(data: OrganizationCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
-    return await create_organization(db, user, data.name, data.slug)
+    org = await create_organization(db, user, data.name, data.slug)
+    await record_audit_log(
+        db=db,
+        organization_id=org.id,
+        user_id=user.id,
+        event_type="ORGANIZATION_CREATE",
+        resource_type="organization",
+        resource_id=str(org.id),
+        payload={"name": org.name, "slug": org.slug},
+    )
+    return org
 
 
 @router.get("", response_model=list[OrganizationResponse])
@@ -77,4 +87,13 @@ async def remove(organization_id: UUID, user_id: UUID, current_user: User = Depe
 @invitation_router.post("/invitations/{token}/accept", response_model=InvitationAcceptResponse, status_code=201)
 async def accept(token: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
     membership = await accept_invitation(db, token, user)
+    await record_audit_log(
+        db=db,
+        organization_id=membership.organization_id,
+        user_id=user.id,
+        event_type="MEMBER_ACCEPT_INVITE",
+        resource_type="membership",
+        resource_id=str(membership.id),
+        payload={"email": user.email},
+    )
     return {"id": membership.id, "organization_id": membership.organization_id, "user_id": membership.user_id}

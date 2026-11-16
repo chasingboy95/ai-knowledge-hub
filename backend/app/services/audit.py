@@ -31,7 +31,7 @@ async def record_audit_log(
         payload=payload,
     )
     db.add(log)
-    await db.flush()
+    await db.commit()
     return log
 
 
