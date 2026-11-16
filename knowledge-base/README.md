@@ -2,7 +2,7 @@
 
 > 面向企业内部团队的多租户 AI 知识库 SaaS。
 >
-> 当前状态：**Phase 1（SaaS 后端基石）与 Phase 2（文档处理管道与向量存储）已完整交付并通过 100% 自动化测试验证**。Phase 3（Secure RAG 检索问答与 LLM 引用）即将在坚实数据与权限基石上启动。
+> 当前状态：**Phase 1、Phase 2 与 Phase 3（Secure RAG 检索问答、LLM 引用与 SSE 流式对话）已完整交付并通过 100% 自动化测试验证**。Phase 4（Agent 工具调用与业务系统集成）即将启动。
 
 - **工程设计全景规范**：[docs/ENGINEERING_DESIGN.md](../docs/ENGINEERING_DESIGN.md)
 - **Phase 1 执行计划**：[docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
@@ -298,7 +298,7 @@ created_at
 
 - [x] **第一阶段：Python SaaS 后端基石** (用户、组织、工作区、JWT、RBAC、Compose)
 - [x] **第二阶段：文档管道、向量化与向量存储** (解析、切块、OpenAI/Mock Embeddings、PGVector、BackgroundTasks)
-- [ ] **第三阶段：Secure RAG、检索与问答** (Query 改写、Top-K、重排、安全过滤、Prompt 构造、引用输出)
+- [x] **第三阶段：Secure RAG、检索与问答** (Query 改写、Top-K、安全过滤、防注入 Prompt 构造、引用输出、SSE 流式推送)
 - [ ] **第四阶段：Agent 与工具集成** (Function Calling、知识库搜索工具、工单集成)
 - [ ] **第五阶段：React SaaS UI** (管理后台、聊天界面、知识库预览)
 - [ ] **第六阶段：安全加固与生产上线** (审计查询、S3/OSS 生产驱动、云端部署)
@@ -337,4 +337,4 @@ docker compose up --build -d api
 ```bash
 uv run pytest
 ```
-- 全部 130 个测试秒级 PASS，覆盖多租户安全、文档生命周期、向量存储与 API 契约。
+- 全部 133 个测试秒级 PASS，覆盖多租户安全、文档生命周期、向量存储、API 契约、多租户 RAG 隔离与 SSE 流式问答。
