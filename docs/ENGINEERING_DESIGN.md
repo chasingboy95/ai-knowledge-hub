@@ -439,7 +439,47 @@ sequenceDiagram
 | `GET` | `/.../chat/sessions/{session_id}/messages` | `knowledge:read` | 200 | 获取会话消息历史 |
 | `POST` | `/.../chat/sessions/{session_id}/stream` | `knowledge:read` | 200 | 发送消息并获取 SSE 流式回答 |
 
-## 7. 附录：独立工程图谱索引
+
+---
+
+## 7. Agent 编排引擎与工具生态 (Agent Orchestration & Tool Ecosystem)
+
+### 7.1 工具调用协议与架构
+```mermaid
+flowchart TD
+    subgraph Client ["客户端交互"]
+        UserQuery["用户指令 (enable_agent=true)"]
+        StreamListener["SSE 接收 (tool_call / tool_result / token)"]
+    end
+
+    subgraph AgentCore ["Agent 编排引擎 (AgentRunner)"]
+        DecisionNode{"LLM 意图决策 (Function Calling)"}
+        ObservationNode["上下文回填 (Tool Observation)"]
+        StepCounter["轮次控制 (max_steps=5 熔断)"]
+    end
+
+    subgraph ToolRegistry ["工具注册中心 (ToolRegistry)"]
+        KBSearch["KnowledgeSearchTool (租户知识库检索)"]
+        TicketCreate["TicketCreateTool (外部工单创建)"]
+        CustomTool["扩展业务工具接口 (BaseTool)"]
+    end
+
+    UserQuery --> DecisionNode
+    DecisionNode -- "输出 tool_calls" --> ToolRegistry
+    ToolRegistry -- "执行返回 ToolResult" --> ObservationNode
+    ObservationNode --> StepCounter
+    StepCounter -- "继续推理" --> DecisionNode
+    DecisionNode -- "生成最终答复" --> StreamListener
+```
+
+### 7.2 SSE 工具调用事件流
+1. `event: tool_call`: `{"tool_call_id": "...", "name": "...", "arguments": {...}}`
+2. `event: tool_result`: `{"tool_call_id": "...", "name": "...", "success": true, "output": "...", "data": {...}}`
+3. `event: token`: 模型基于工具执行结果产生的增量文本。
+4. `event: message`: 最终落库的 Assistant 消息。
+5. `event: done`: `[DONE]` 结束。
+
+## 8. 附录：独立工程图谱索引
 
 项目内提供独立排版、符合设计系统标准的 HTML 交互图谱，位于 [`docs/diagrams/`](docs/diagrams/)：
 1. **[用户认证与 Token 轮转时序图 (`auth-sequence.html`)](docs/diagrams/auth-sequence.html)**

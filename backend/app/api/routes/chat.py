@@ -17,6 +17,7 @@ from backend.app.schemas.chat import (
     ChatSessionResponse,
     ChatStreamChunk,
 )
+from backend.app.services.agent import AgentRunner, get_agent_runner
 from backend.app.services.rag import RAGService, get_rag_service
 
 router = APIRouter()
@@ -24,6 +25,10 @@ router = APIRouter()
 
 def get_rag(settings: Settings = Depends(get_settings)) -> RAGService:
     return get_rag_service(settings)
+
+
+def get_agent(settings: Settings = Depends(get_settings)) -> AgentRunner:
+    return get_agent_runner(settings)
 
 
 @router.post(
@@ -141,18 +146,33 @@ async def stream_chat_message(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
+    agent_runner: AgentRunner = Depends(get_agent),
 ):
     async def event_generator() -> AsyncGenerator[str, None]:
-        generator = rag_service.stream_chat(
-            db=db,
-            workspace_id=workspace_id,
-            user_id=current_user.id,
-            session_id=session_id,
-            content=payload.content,
-            knowledge_base_ids=payload.knowledge_base_ids,
-            top_k=payload.top_k,
-            min_similarity=payload.min_similarity,
-        )
+        if payload.enable_agent:
+            session = await rag_service.get_session(db, workspace_id, session_id)
+            history_msgs = await rag_service.get_messages(db, workspace_id, session_id)
+            history = [{"role": m.role, "content": m.content} for m in history_msgs]
+            generator = agent_runner.run_stream(
+                db=db,
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                session=session,
+                user_prompt=payload.content,
+                history=history,
+            )
+        else:
+            generator = rag_service.stream_chat(
+                db=db,
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                session_id=session_id,
+                content=payload.content,
+                knowledge_base_ids=payload.knowledge_base_ids,
+                top_k=payload.top_k,
+                min_similarity=payload.min_similarity,
+            )
+
         async for chunk in generator:
             event_type = chunk["event"]
             data_val = chunk["data"]

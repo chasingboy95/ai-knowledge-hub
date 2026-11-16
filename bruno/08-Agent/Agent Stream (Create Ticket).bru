@@ -1,0 +1,26 @@
+meta {
+  name: Agent Stream (Create Ticket)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions/{{sessionId}}/stream
+  body: json
+  auth: bearer
+}
+
+headers {
+  Accept: text/event-stream
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "content": "请帮我提交一个 IT 故障工单，办公桌网络端口无法获取 IP 地址",
+    "enable_agent": true
+  }
+}

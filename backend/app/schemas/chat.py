@@ -39,6 +39,7 @@ class ChatMessageCreate(BaseModel):
     knowledge_base_ids: list[UUID] | None = None
     top_k: int = Field(default=5, ge=1, le=20)
     min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
+    enable_agent: bool = Field(default=False, description="是否启用 Agent 自主工具调用模式")
 
 
 class ChatMessageResponse(BaseModel):
@@ -46,7 +47,7 @@ class ChatMessageResponse(BaseModel):
     session_id: UUID
     role: str
     content: str
-    context_citations: list[CitationSource] | None = None
+    context_citations: list[dict] | None = None
     tokens_used: int | None = None
     created_at: datetime
 
@@ -54,5 +55,5 @@ class ChatMessageResponse(BaseModel):
 
 
 class ChatStreamChunk(BaseModel):
-    event: str  # "context" | "token" | "message" | "error" | "done"
+    event: str  # "context" | "tool_call" | "tool_result" | "token" | "message" | "error" | "done"
     data: dict | str

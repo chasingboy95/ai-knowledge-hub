@@ -1,0 +1,26 @@
+meta {
+  name: Agent Stream (Knowledge Search)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions/{{sessionId}}/stream
+  body: json
+  auth: bearer
+}
+
+headers {
+  Accept: text/event-stream
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "content": "请查询企业多租户数据隔离机制的实现细节",
+    "enable_agent": true
+  }
+}
