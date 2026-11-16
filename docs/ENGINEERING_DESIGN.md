@@ -485,3 +485,4 @@ flowchart TD
 1. **[用户认证与 Token 轮转时序图 (`auth-sequence.html`)](docs/diagrams/auth-sequence.html)**
 2. **[数据库实体关系与物理模式图 (`database-er.html`)](docs/diagrams/database-er.html)**
 3. **[文档处理流水线与状态流转图 (`document-pipeline.html`)](docs/diagrams/document-pipeline.html)**
+4. **[Secure RAG 与 Agent 工具执行时序图 (`rag-agent-lifecycle.html`)](docs/diagrams/rag-agent-lifecycle.html)**
