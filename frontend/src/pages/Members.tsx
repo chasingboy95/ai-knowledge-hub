@@ -21,7 +21,7 @@ export const Members: React.FC = () => {
   // Invite Modal State
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'member' | 'viewer'>('member');
+  const [inviteRole, setInviteRole] = useState<'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER'>('EDITOR');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
@@ -92,13 +92,13 @@ export const Members: React.FC = () => {
   };
 
   const getRoleBadge = (role: string) => {
-    switch (role.toLowerCase()) {
-      case 'owner':
+    switch (role.toUpperCase()) {
+      case 'OWNER':
         return <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">所有者 (Owner)</span>;
-      case 'admin':
+      case 'ADMIN':
         return <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800 border border-orange-200">管理员 (Admin)</span>;
-      case 'member':
-        return <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">成员 (Member)</span>;
+      case 'EDITOR':
+        return <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">编辑者 (Editor)</span>;
       default:
         return <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">只读 (Viewer)</span>;
     }
@@ -163,7 +163,7 @@ export const Members: React.FC = () => {
             <tbody className="divide-y divide-slate-100 text-sm">
               {members.map((member) => {
                 const isSelf = member.user_id === currentUser?.id;
-                const isOwner = member.role.toLowerCase() === 'owner';
+                const isOwner = member.role.toUpperCase() === 'OWNER';
 
                 return (
                   <tr key={member.id} className="hover:bg-slate-50/70 transition">
@@ -296,9 +296,9 @@ export const Members: React.FC = () => {
                     onChange={(e) => setInviteRole(e.target.value as any)}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
                   >
-                    <option value="admin">Admin - 组织管理员（管理成员、文档及智能体）</option>
-                    <option value="member">Member - 普通成员（上传文档、创建对话会话）</option>
-                    <option value="viewer">Viewer - 只读访问（检索知识库与体验问答）</option>
+                    <option value="ADMIN">ADMIN - 组织管理员（管理成员、文档及智能体）</option>
+                    <option value="EDITOR">EDITOR - 知识库编辑者（上传与管理文档、创建会话）</option>
+                    <option value="VIEWER">VIEWER - 只读访问者（检索知识库与体验问答）</option>
                   </select>
                 </div>
 

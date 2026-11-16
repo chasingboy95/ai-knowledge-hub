@@ -23,16 +23,33 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (!refreshToken) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+
       try {
-        const refreshRes = await axios.post('/api/v1/auth/refresh');
+        const refreshRes = await axios.post('/api/v1/auth/refresh', {
+          refresh_token: refreshToken,
+        });
         const newToken = refreshRes.data.access_token;
+        const newRefreshToken = refreshRes.data.refresh_token;
         if (newToken) {
           localStorage.setItem('access_token', newToken);
+          if (newRefreshToken) {
+            localStorage.setItem('refresh_token', newRefreshToken);
+          }
           originalRequest.headers.Authorization = `Bearer ${newToken}`;
           return apiClient(originalRequest);
         }
       } catch (refreshErr) {
         localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
           window.location.href = '/login';
         }

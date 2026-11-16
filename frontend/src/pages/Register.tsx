@@ -19,8 +19,8 @@ export const Register: React.FC = () => {
 
     try {
       const res = await apiClient.post('/auth/register', { email, password });
-      const { access_token, user } = res.data;
-      login(access_token, user);
+      const { access_token, refresh_token } = res.data;
+      login(access_token, refresh_token);
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.detail || '注册失败，请更换邮箱重试');
@@ -88,15 +88,15 @@ export const Register: React.FC = () => {
             disabled={loading}
             className="w-full mt-2 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            {loading ? '注册中...' : '立即注册并创建组织'}
+            {loading ? '注册中...' : '立即注册'}
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
 
         <div className="mt-6 text-center text-sm text-slate-500">
-          已有账号？{' '}
+          已经有企业账户？{' '}
           <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium">
-            返回登录
+            直接登录
           </Link>
         </div>
       </div>

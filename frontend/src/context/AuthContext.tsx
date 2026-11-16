@@ -29,12 +29,14 @@ interface AuthContextType {
   currentWorkspace: Workspace | null;
   token: string | null;
   isLoading: boolean;
-  login: (token: string, user: User) => void;
+  login: (token: string, refreshToken?: string, user?: User | null) => void;
   logout: () => void;
   switchOrganization: (org: Organization) => void;
   switchWorkspace: (ws: Workspace) => void;
   refreshWorkspaces: () => Promise<void>;
   refreshOrganizations: () => Promise<void>;
+  createOrganization: (name: string, slug: string) => Promise<Organization>;
+  createWorkspace: (name: string, slug: string) => Promise<Workspace>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -59,6 +61,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const savedOrgId = localStorage.getItem('current_org_id');
         const defaultOrg = orgsRes.data.find((o) => o.id === savedOrgId) || orgsRes.data[0];
         setCurrentOrg(defaultOrg);
+      } else {
+        setCurrentOrg(null);
+        setWorkspaces([]);
+        setCurrentWorkspace(null);
       }
     } catch {
       logout();
@@ -68,7 +74,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshWorkspaces = async () => {
-    if (!currentOrg) return;
+    if (!currentOrg) {
+      setWorkspaces([]);
+      setCurrentWorkspace(null);
+      return;
+    }
     try {
       const wsRes = await apiClient.get<Workspace[]>(`/organizations/${currentOrg.id}/workspaces`);
       setWorkspaces(wsRes.data);
@@ -96,23 +106,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (currentOrg) {
       localStorage.setItem('current_org_id', currentOrg.id);
       refreshWorkspaces();
+    } else {
+      localStorage.removeItem('current_org_id');
+      setWorkspaces([]);
+      setCurrentWorkspace(null);
     }
   }, [currentOrg]);
 
   useEffect(() => {
     if (currentWorkspace) {
       localStorage.setItem('current_workspace_id', currentWorkspace.id);
+    } else {
+      localStorage.removeItem('current_workspace_id');
     }
   }, [currentWorkspace]);
 
-  const login = (newToken: string, newUser: User) => {
+  const login = (newToken: string, refreshToken?: string, newUser?: User | null) => {
     localStorage.setItem('access_token', newToken);
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken);
+    }
     setToken(newToken);
-    setUser(newUser);
+    if (newUser) {
+      setUser(newUser);
+    }
   };
 
   const logout = () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('current_org_id');
     localStorage.removeItem('current_workspace_id');
     setToken(null);
@@ -131,6 +153,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentWorkspace(ws);
   };
 
+  const createOrganization = async (name: string, slug: string): Promise<Organization> => {
+    const res = await apiClient.post<Organization>('/organizations', { name, slug });
+    const newOrg = res.data;
+    setOrganizations((prev) => [...prev, newOrg]);
+    setCurrentOrg(newOrg);
+    return newOrg;
+  };
+
+  const createWorkspace = async (name: string, slug: string): Promise<Workspace> => {
+    if (!currentOrg) throw new Error('No organization selected');
+    const res = await apiClient.post<Workspace>(`/organizations/${currentOrg.id}/workspaces`, { name, slug });
+    const newWs = res.data;
+    setWorkspaces((prev) => [...prev, newWs]);
+    setCurrentWorkspace(newWs);
+    return newWs;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -147,6 +186,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switchWorkspace,
         refreshWorkspaces,
         refreshOrganizations: fetchProfileAndOrgs,
+        createOrganization,
+        createWorkspace,
       }}
     >
       {children}

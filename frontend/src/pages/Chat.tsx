@@ -114,7 +114,7 @@ export const Chat: React.FC = () => {
     setLoadingSessions(true);
     try {
       const res = await apiClient.get<ChatSession[]>(
-        `/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`
       );
       setSessions(res.data);
       if (res.data.length > 0 && !currentSessionId) {
@@ -131,7 +131,7 @@ export const Chat: React.FC = () => {
     if (!currentOrg || !currentWorkspace) return;
     try {
       const res = await apiClient.get<KnowledgeBase[]>(
-        `/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases`
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases`
       );
       setKnowledgeBases(res.data);
     } catch (err) {
@@ -143,7 +143,7 @@ export const Chat: React.FC = () => {
     if (!currentOrg || !currentWorkspace) return;
     try {
       const res = await apiClient.get<Message[]>(
-        `/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}/messages`
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}/messages`
       );
       setMessages(res.data);
     } catch (err) {
@@ -155,7 +155,7 @@ export const Chat: React.FC = () => {
     if (!currentOrg || !currentWorkspace) return;
     try {
       const res = await apiClient.post<ChatSession>(
-        `/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
         { title: `新会话 ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` }
       );
       setSessions([res.data, ...sessions]);
@@ -172,7 +172,7 @@ export const Chat: React.FC = () => {
 
     try {
       await apiClient.delete(
-        `/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}`
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}`
       );
       const updated = sessions.filter((s) => s.id !== sessionId);
       setSessions(updated);
@@ -193,7 +193,7 @@ export const Chat: React.FC = () => {
       // Create session automatically if none exists
       try {
         const newSessionRes = await apiClient.post<ChatSession>(
-          `/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
+          `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
           { title: inputContent.slice(0, 30) }
         );
         targetSessionId = newSessionRes.data.id;
@@ -225,7 +225,7 @@ export const Chat: React.FC = () => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    const streamUrl = `/api/v1/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${targetSessionId}/stream`;
+    const streamUrl = `/api/v1/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${targetSessionId}/stream`;
 
     const payload = {
       content: userText,

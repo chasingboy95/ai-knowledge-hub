@@ -19,8 +19,8 @@ export const Login: React.FC = () => {
 
     try {
       const res = await apiClient.post('/auth/login', { email, password });
-      const { access_token, user } = res.data;
-      login(access_token, user);
+      const { access_token, refresh_token } = res.data;
+      login(access_token, refresh_token);
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.detail || '登录失败，请检查邮箱与密码');
