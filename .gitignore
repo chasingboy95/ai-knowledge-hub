@@ -12,4 +12,11 @@ build/
 .worktrees/
 
 postgres_data/
+data/
 *.log
+
+# Tests
+tests/
+tests/**
+test_*.py
+*_test.py

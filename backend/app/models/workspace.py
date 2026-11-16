@@ -25,3 +25,9 @@ class Workspace(Base):
 
     organization = relationship("Organization", back_populates="workspaces")
     creator = relationship("User", back_populates="workspaces_created")
+    knowledge_bases = relationship(
+        "KnowledgeBase",
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

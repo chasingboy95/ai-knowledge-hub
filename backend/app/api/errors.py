@@ -12,6 +12,7 @@ class ErrorResponse(BaseModel):
 
 
 ERRORS = {
+    400: ("BAD_REQUEST", "Bad request"),
     401: ("UNAUTHORIZED", "Authentication is required"),
     403: ("FORBIDDEN", "You do not have permission to access this resource"),
     404: ("NOT_FOUND", "Resource not found"),

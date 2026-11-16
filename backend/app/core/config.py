@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    storage_dir: str = "./data/storage"
+    embedding_provider: str = "mock"
+    openai_api_key: str | None = None
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
