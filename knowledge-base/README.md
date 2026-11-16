@@ -2,13 +2,14 @@
 
 > 面向企业内部团队的多租户 AI 知识库 SaaS。
 >
-> 当前状态：**Phase 1、Phase 2 与 Phase 3（Secure RAG 检索问答、LLM 引用与 SSE 流式对话）已完整交付并通过 100% 自动化测试验证**。Phase 4（Agent 工具调用与业务系统集成）已完整交付。Phase 5（React SaaS UI 与管理后台）即将启动。
+> 当前状态：**Phase 1、Phase 2、Phase 3、Phase 4 与 Phase 5（React SaaS 前端交互控制台）已完整交付并通过 100% 自动化测试与前端静态构建验证**。Phase 6（安全审计加固与生产上线）准备就绪。
 
 - **工程设计全景规范**：[docs/ENGINEERING_DESIGN.md](../docs/ENGINEERING_DESIGN.md)
 - **Phase 1 执行计划**：[docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
 - **Phase 2 执行计划**：[docs/superpowers/plans/2026-09-09-phase-2-document-pipeline-vector-store.md](../docs/superpowers/plans/2026-09-09-phase-2-document-pipeline-vector-store.md)
 - **Phase 3 执行计划**：[docs/superpowers/plans/2026-09-10-phase-3-secure-rag-retrieval.md](../docs/superpowers/plans/2026-09-10-phase-3-secure-rag-retrieval.md)
 - **Phase 4 执行计划**：[docs/superpowers/plans/2026-09-11-phase-4-agent-tools-integration.md](../docs/superpowers/plans/2026-09-11-phase-4-agent-tools-integration.md)
+- **Phase 5 执行计划**：[docs/superpowers/plans/2026-09-12-phase-5-react-saas-ui.md](../docs/superpowers/plans/2026-09-12-phase-5-react-saas-ui.md)
 - **工程设计图谱**：
   - [数据库实体关系与物理模式图 (`database-er.html`)](../docs/diagrams/database-er.html)
   - [文档处理与向量化管道架构图 (`document-pipeline.html`)](../docs/diagrams/document-pipeline.html)
@@ -23,6 +24,7 @@
 - 文档上传、解析、切块、向量化与检索
 - 带权限控制的 RAG 问答
 - Agent 工具调用与业务系统集成
+- 现代化企业 SaaS 前端控制台 (Vite + React 19 + TypeScript + Tailwind CSS)
 - 审计日志
 - 认证、授权、密钥和数据安全
 
@@ -46,6 +48,8 @@ Workspace
 KnowledgeBase
 Document
 DocumentChunk (Vector 1536)
+ChatSession
+ChatMessage
 ```
 
 关系层级拓扑：
@@ -54,9 +58,11 @@ DocumentChunk (Vector 1536)
 Organization
 ├── Memberships (User + Role)
 └── Workspaces
-    └── Knowledge Bases
-        └── Documents
-            └── Document Chunks (pgvector 1536)
+    ├── Knowledge Bases
+    │   └── Documents
+    │       └── Document Chunks (pgvector 1536)
+    └── Chat Sessions
+        └── Chat Messages (Citations & Tokens)
 ```
 
 #### 数据库实体关系 (ER Diagram)
@@ -72,6 +78,8 @@ erDiagram
     workspaces ||--o{ knowledge_bases : "contains"
     knowledge_bases ||--o{ documents : "contains"
     documents ||--o{ document_chunks : "chunks_into"
+    workspaces ||--o{ chat_sessions : "holds"
+    chat_sessions ||--o{ chat_messages : "records"
 ```
 
 初始角色：
@@ -203,18 +211,12 @@ LLM
 
 ### 2.5 Agent 与工具调用
 
-首期规划三个工具：
+首期规划核心工具：
 
 ```text
 search_knowledge_base()
 get_user_profile()
 create_support_ticket()
-```
-
-后续可增加：
-
-```text
-send_email()
 ```
 
 典型流程：
@@ -235,16 +237,14 @@ Agent 工具必须复用当前用户的租户上下文和权限，不能绕过 R
 
 ### 2.6 React SaaS 前端
 
-页面规划：
+页面规划（已交付）：
 
-- 登录、注册、邀请接受
-- Dashboard：Organization 概览、Workspace 列表
-- Knowledge Base：知识库列表、知识库详情
-- Document：文档上传、状态查看、切块预览、重新索引、删除
-- Chat / RAG：问答会话、引用预览、来源跳转
-- Members：成员列表、邀请、角色修改、移除
-- Settings：Organization 设置、API Key 管理
-- Audit：审计日志浏览
+- 登录、注册、邀请令牌展示 (`Login.tsx`, `Register.tsx`)
+- Dashboard：Organization 概览、Workspace 列表 (`Dashboard.tsx`)
+- Knowledge Base：知识库列表、知识库创建 (`KnowledgeBases.tsx`)
+- Document：文档上传、状态实时刷新、切块抽屉预览、重新索引、删除 (`KnowledgeBaseDetail.tsx`)
+- Chat / RAG / Agent：多会话管理、SSE 流式打字推流、引用卡片悬停展开、Agent 工具调用卡片实时折叠展示 (`Chat.tsx`)
+- Members：成员列表、邀请生成、角色显示与移除 (`Members.tsx`)
 
 ### 2.7 审计与可观测性
 
@@ -281,6 +281,7 @@ created_at
 ## 3. 技术栈选型
 
 - 后端框架：Python 3.12 + FastAPI + Pydantic v2
+- 前端框架：Vite + React 19 + TypeScript + Tailwind CSS + Lucide Icons + React Router DOM
 - ORM 与数据库：SQLAlchemy 2.x (Async) + asyncpg + PostgreSQL 16 + pgvector
 - 数据库迁移：Alembic
 - 文档解析：`pypdf` (PDF), `python-docx` (DOCX)
@@ -303,22 +304,24 @@ created_at
 - [x] **第二阶段：文档管道、向量化与向量存储** (解析、切块、OpenAI/Mock Embeddings、PGVector、BackgroundTasks)
 - [x] **第三阶段：Secure RAG、检索与问答** (Query 改写、Top-K、安全过滤、防注入 Prompt 构造、引用输出、SSE 流式推送)
 - [x] **第四阶段：Agent 与工具集成** (Tool Registry、Function Calling 循环驱动、知识库搜索工具、工单集成、SSE 工具流式推流)
-- [ ] **第五阶段：React SaaS UI** (管理后台、聊天界面、知识库预览)
+- [x] **第五阶段：React SaaS UI** (管理后台、聊天界面、知识库预览、成员权限)
 - [ ] **第六阶段：安全加固与生产上线** (审计查询、S3/OSS 生产驱动、云端部署)
 
-## 6. 已验证实现 (Phase 1 & Phase 2 交付基线)
+## 6. 已验证实现 (Phase 1 ~ Phase 5 交付基线)
 
 ### 实际工程目录
 
-- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型、存储和解析器。
-- `backend/alembic`：Alembic 迁移脚本（`0001_initial_schema`, `0002_knowledge_and_documents`）。
-- `tests`：租户隔离、RBAC、管道流转、分块、向量库、数据库合约等全套测试。
-- `docs/diagrams`：独立可视化工程图谱（认证时序、数据库 ER、文档管道）。
+- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型、存储、解析器、LLM 及 Agent 运行环境。
+- `backend/alembic`：Alembic 迁移脚本（`0001_initial_schema`, `0002_knowledge_and_documents`, `0003_chat_and_rag`）。
+- `frontend/`：Vite + React 19 + TypeScript + Tailwind CSS 控制台（仪表盘、知识库、切块预览、SSE 聊天、成员管理）。
+- `tests`：租户隔离、RBAC、管道流转、分块、向量库、数据库合约、Secure RAG 检索问答、Agent 工具编排等全套 135 项测试。
+- `docs/diagrams`：独立可视化工程图谱（认证时序、数据库 ER、文档管道、RAG & Agent 生命周期）。
 - `docs/ENGINEERING_DESIGN.md`：完整工程设计全景文档。
 - `compose.yaml`、`Dockerfile`、`.env.example`：本地与容器化运行配置。
 
 ### 启动与环境命令
 
+启动后端：
 ```bash
 cp .env.example .env
 uv sync
@@ -327,16 +330,21 @@ uv run alembic upgrade head
 uv run uvicorn backend.app.main:app --reload
 ```
 
-容器镜像启动模式：
-
+启动前端：
 ```bash
-docker compose up -d postgres
-docker compose run --rm api uv run alembic upgrade head
-docker compose up --build -d api
+cd frontend
+npm install
+npm run dev
+# 浏览器访问 http://localhost:5173
 ```
 
-### 测试验证命令
+前端生产打包校验：
+```bash
+cd frontend
+npm run build
+```
 
+后端全量自动化测试校验：
 ```bash
 uv run pytest
 ```
