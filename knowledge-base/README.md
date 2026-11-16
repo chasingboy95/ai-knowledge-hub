@@ -2,11 +2,15 @@
 
 > 面向企业内部团队的多租户 AI 知识库 SaaS。
 >
-> 当前状态：架构与需求设计阶段，尚未开始实现。
->
-> 以上状态描述为初始设计基线；当前 Phase 1 backend 已实现并通过测试，整体 AI 知识库/RAG 仍在设计阶段。
+> 当前状态：**Phase 1（SaaS 后端基石）与 Phase 2（文档处理管道与向量存储）已完整交付并通过 100% 自动化测试验证**。Phase 3（Secure RAG 检索问答与 LLM 引用）即将在坚实数据与权限基石上启动。
 
-Phase 1 执行计划：[2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
+- **工程设计全景规范**：[docs/ENGINEERING_DESIGN.md](../docs/ENGINEERING_DESIGN.md)
+- **Phase 1 执行计划**：[docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
+- **Phase 2 执行计划**：[docs/superpowers/plans/2026-09-09-phase-2-document-pipeline-vector-store.md](../docs/superpowers/plans/2026-09-09-phase-2-document-pipeline-vector-store.md)
+- **工程设计图谱**：
+  - [数据库实体关系与物理模式图 (`database-er.html`)](../docs/diagrams/database-er.html)
+  - [文档处理与向量化管道架构图 (`document-pipeline.html`)](../docs/diagrams/document-pipeline.html)
+  - [用户认证与 Token 轮转时序图 (`auth-sequence.html`)](../docs/diagrams/auth-sequence.html)
 
 ## 1. 项目目标
 
@@ -36,29 +40,36 @@ Membership
 Role
 Permission
 Workspace
+KnowledgeBase
+Document
+DocumentChunk (Vector 1536)
 ```
 
-关系：
+关系层级拓扑：
 
 ```text
 Organization
-├── Admin
-├── Member
-└── Workspace
-    ├── Knowledge Base
-    └── Knowledge Base
+├── Memberships (User + Role)
+└── Workspaces
+    └── Knowledge Bases
+        └── Documents
+            └── Document Chunks (pgvector 1536)
 ```
 
-首期必须支持：
+#### 数据库实体关系 (ER Diagram)
 
-- 注册、登录、Logout
-- JWT 和 Refresh Token
-- OAuth 2.0 / OIDC 登录接入
-- 用户 Profile
-- Organization 创建与管理
-- 邀请、移除组织成员
-- Workspace 创建与管理
-- RBAC
+```mermaid
+erDiagram
+    organizations ||--o{ workspaces : "has"
+    organizations ||--o{ memberships : "has"
+    users ||--o{ memberships : "participates"
+    roles ||--o{ memberships : "assigns"
+    roles ||--o{ role_permissions : "includes"
+    permissions ||--o{ role_permissions : "granted_to"
+    workspaces ||--o{ knowledge_bases : "contains"
+    knowledge_bases ||--o{ documents : "contains"
+    documents ||--o{ document_chunks : "chunks_into"
+```
 
 初始角色：
 
@@ -88,25 +99,12 @@ audit:read
 
 ### 2.2 多租户隔离
 
-首版采用共享数据库、共享 Schema，通过 `organization_id` 实现租户隔离：
+首版采用共享数据库、共享 Schema，通过 `organization_id` 与 `workspace_id` 实现双重严格租户与边界隔离：
 
 ```text
 Shared Database
 └── Shared Schema
-    └── organization_id / tenant scope
-```
-
-示例：
-
-```text
-documents
-├── id
-├── organization_id
-├── knowledge_base_id
-├── filename
-├── status
-├── created_by
-└── created_at
+    └── organization_id + workspace_id / tenant scope
 ```
 
 所有 API 禁止信任前端传入的 `organization_id`。访问范围必须由后端根据以下链路推导：
@@ -129,44 +127,30 @@ Permission
 
 ### 2.3 知识库与文档处理
 
-首期支持：
+首期已支持格式：
 
-- PDF
-- DOCX
+- PDF（`pypdf`，支持保留逐页元数据）
+- DOCX（`python-docx`，段落与表格标准化提取）
 - Markdown
-- TXT
-- Web Page
+- TXT / JSON / CSV（`PlainTextParser`）
 
-处理流程：
+处理流程与状态机：
 
-```text
-Upload
-  ↓
-Object Storage
-  ↓
-Document Parsing
-  ↓
-Cleaning
-  ↓
-Chunking
-  ↓
-Embedding
-  ↓
-Vector Store
+```mermaid
+stateDiagram-v2
+    [*] --> UPLOADED : 上传原始文件到对象存储并写入 DB
+    UPLOADED --> PARSING : 启动后台任务解析文件
+    PARSING --> CHUNKING : 文本提取与清洗完成
+    PARSING --> FAILED : 格式不支持或文件损坏
+    CHUNKING --> EMBEDDING : 递归分块完成 (保留页码元数据)
+    CHUNKING --> FAILED : 切块异常
+    EMBEDDING --> READY : 生成 1536 维向量并持久化存储
+    EMBEDDING --> FAILED : Embedding 服务异常或超时
+    FAILED --> UPLOADED : POST .../reindex 触发重试
+    READY --> UPLOADED : POST .../reindex 触发重新索引
 ```
 
-文档状态：
-
-```text
-UPLOADED
-PARSING
-CHUNKING
-EMBEDDING
-READY
-FAILED
-```
-
-文档原文件应存储于对象存储，不直接存入 PostgreSQL。解析、切块和 Embedding 属于异步任务。
+文档原文件存储于对象存储，不直接存入 PostgreSQL。解析、切块和 Embedding 属于异步任务。
 
 ### 2.4 RAG 与引用
 
@@ -216,7 +200,7 @@ LLM
 
 ### 2.5 Agent 与工具调用
 
-首期只实现三个工具：
+首期规划三个工具：
 
 ```text
 search_knowledge_base()
@@ -248,290 +232,89 @@ Agent 工具必须复用当前用户的租户上下文和权限，不能绕过 R
 
 ### 2.6 React SaaS 前端
 
-技术栈：
+页面规划：
+
+- 登录、注册、邀请接受
+- Dashboard：Organization 概览、Workspace 列表
+- Knowledge Base：知识库列表、知识库详情
+- Document：文档上传、状态查看、切块预览、重新索引、删除
+- Chat / RAG：问答会话、引用预览、来源跳转
+- Members：成员列表、邀请、角色修改、移除
+- Settings：Organization 设置、API Key 管理
+- Audit：审计日志浏览
+
+### 2.7 审计与可观测性
+
+审计事件设计：
 
 ```text
-React
-TypeScript
-Vite
-React Router
-Axios
-成熟 UI component library
+AUTH_LOGIN
+AUTH_LOGOUT
+ORGANIZATION_UPDATE
+MEMBER_INVITE
+MEMBER_REMOVE
+WORKSPACE_CREATE
+DOCUMENT_UPLOAD
+DOCUMENT_DELETE
+RAG_QUERY
+AGENT_TOOL_CALL
 ```
 
-首期页面：
-
-```text
-/login
-/dashboard
-/organizations
-/knowledge-bases
-/knowledge-bases/:id
-/documents
-/chat
-/members
-/settings
-/audit
-```
-
-核心界面：
-
-- Dashboard：知识库数量、文档数量、成员数量、AI 查询量
-- Knowledge Base：文档上传、状态、更新时间和基本操作
-- Chat：问答记录、答案、引用来源
-- Members：邀请成员、移除成员、角色调整
-- Audit：按时间、用户、资源和操作查看审计记录
-
-### 2.7 安全
-
-认证：
-
-```text
-OAuth 2.0 / OIDC
-短期 JWT Access Token
-Refresh Token
-```
-
-授权：
-
-```text
-User
- ↓
-Membership
- ↓
-Role
- ↓
-Permission
-```
-
-密钥管理：
-
-- 禁止在 Git 中保存生产密钥
-- 本地开发使用 `.env`
-- 部署使用 Docker Secret 或 Secret Manager
-- README 中明确说明生产密钥管理策略
-
-数据保护：
-
-- 传输中加密：HTTPS / TLS
-- 存储加密：数据库、对象存储及备份使用静态加密能力
-- 记录认证、授权、文档和知识库操作的审计事件
-
-审计日志字段：
+审计记录字段：
 
 ```text
 id
 organization_id
 user_id
-action
+event_type
 resource_type
 resource_id
-ip
-timestamp
-result
+ip_address
+user_agent
+payload
+created_at
 ```
 
-典型事件：
+## 3. 技术栈选型
 
-```text
-USER_LOGIN
-DOCUMENT_UPLOAD
-DOCUMENT_DELETE
-MEMBER_INVITE
-ROLE_CHANGE
-KNOWLEDGE_QUERY
-API_KEY_CREATED
-```
+- 后端框架：Python 3.12 + FastAPI + Pydantic v2
+- ORM 与数据库：SQLAlchemy 2.x (Async) + asyncpg + PostgreSQL 16 + pgvector
+- 数据库迁移：Alembic
+- 文档解析：`pypdf` (PDF), `python-docx` (DOCX)
+- 向量计算与切块：Numpy, `RecursiveCharacterChunker`
+- 认证与加密：PyJWT, `pwdlib[argon2]`
+- 容器编排：Docker & Docker Compose
+- 测试体系：Pytest + `pytest-asyncio` + `httpx` (支持内存 SQLite 与无依赖测试)
 
-### 2.8 基础设施与部署
+## 4. 安全设计基线
 
-首版不引入 Kubernetes，使用 Docker Compose：
+- 绝不信任前端传入的 `organization_id`，所有操作由 JWT -> User -> Membership 严格推导。
+- 租户隔离贯穿全文：数据库字段、外键级联、API URL 路径与向量检索元数据过滤。
+- 密码存储：强制 Argon2id 哈希，禁止明文或弱散列算法。
+- 令牌安全：Access Token 短有效期（默认 30 分钟），Refresh Token 一次性轮转并入库哈希。
+- 存储防御：`LocalStorageService` 强制路径穿越防御，原始文件隔离按租户层级存放。
 
-```text
-frontend
-api
-worker
-postgres + pgvector
-redis
-minio
-```
+## 5. 项目路线图与交付状态
 
-职责：
+- [x] **第一阶段：Python SaaS 后端基石** (用户、组织、工作区、JWT、RBAC、Compose)
+- [x] **第二阶段：文档管道、向量化与向量存储** (解析、切块、OpenAI/Mock Embeddings、PGVector、BackgroundTasks)
+- [ ] **第三阶段：Secure RAG、检索与问答** (Query 改写、Top-K、重排、安全过滤、Prompt 构造、引用输出)
+- [ ] **第四阶段：Agent 与工具集成** (Function Calling、知识库搜索工具、工单集成)
+- [ ] **第五阶段：React SaaS UI** (管理后台、聊天界面、知识库预览)
+- [ ] **第六阶段：安全加固与生产上线** (审计查询、S3/OSS 生产驱动、云端部署)
 
-- `frontend`：React 前端
-- `api`：FastAPI API 服务
-- `worker`：Celery 异步任务，处理解析、切块、Embedding 等工作
-- `postgres`：业务数据和首版向量数据
-- `redis`：缓存、Celery Broker 和必要的任务状态
-- `minio`：本地开发对象存储，生产环境可替换为 S3 兼容服务
+## 6. 已验证实现 (Phase 1 & Phase 2 交付基线)
 
-Kafka 和 Kubernetes 延后到出现明确的跨服务事件流、规模或部署需求后再引入。
+### 实际工程目录
 
-## 3. 技术栈
+- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型、存储和解析器。
+- `backend/alembic`：Alembic 迁移脚本（`0001_initial_schema`, `0002_knowledge_and_documents`）。
+- `tests`：租户隔离、RBAC、管道流转、分块、向量库、数据库合约等全套测试。
+- `docs/diagrams`：独立可视化工程图谱（认证时序、数据库 ER、文档管道）。
+- `docs/ENGINEERING_DESIGN.md`：完整工程设计全景文档。
+- `compose.yaml`、`Dockerfile`、`.env.example`：本地与容器化运行配置。
 
-### Backend
-
-```text
-Python
-FastAPI
-SQLAlchemy
-Pydantic
-Alembic
-PostgreSQL
-Redis
-Celery / Background Task
-Kafka（后期）
-```
-
-FastAPI 是后端核心框架。
-
-### AI 抽象
-
-业务代码不得直接绑定某个 LLM 或向量数据库，统一依赖以下接口：
-
-```python
-class LLMProvider:
-    async def chat(...):
-        pass
-
-
-class EmbeddingProvider:
-    async def embed(...):
-        pass
-
-
-class VectorStore:
-    async def search(...):
-        pass
-```
-
-首期可以实现：
-
-```text
-OpenAILLMProvider
-```
-
-后续可增加：
-
-```text
-AzureOpenAIProvider
-ClaudeProvider
-QdrantVectorStore / 其他 VectorStore
-```
-
-如果没有规模需求，首版优先使用 PostgreSQL + pgvector；若后续选择独立向量数据库，业务层通过 `VectorStore` 接口切换。
-
-## 4. 逻辑架构
-
-```text
-                 React
-                   │
-                   │ HTTPS
-                   ↓
-              FastAPI API
-                   │
-        ┌──────────┼───────────┐
-        │          │           │
-      Auth       SaaS         AI
-        │        Core          │
-        │          │           │
-        ↓          ↓           ↓
-   OAuth/JWT   PostgreSQL    LLM API
-                   │
-                  Redis
-                   │
-                   ↓
-              Worker Service
-                   │
-          ┌────────┼─────────┐
-          ↓        ↓         ↓
-        Parser   Embedder   Agent
-                   │
-                   ↓
-              Vector Store
-```
-
-## 5. 推荐实施阶段
-
-### Phase 1：Python SaaS Backend
-
-目标：
-
-> 补齐 Python、FastAPI 和 SaaS 后端基础能力。
-
-核心交付：
-
-```text
-FastAPI
-PostgreSQL
-User
-Organization
-Workspace
-JWT
-RBAC
-REST API
-Docker
-```
-
-完成：
-
-- FastAPI 应用骨架和 REST API
-- PostgreSQL 数据库连接与迁移
-- User、Organization、Membership、Role、Permission、Workspace 模型
-- 注册、登录、Logout
-- JWT Access Token 和 Refresh Token
-- RBAC 权限校验
-- 从 JWT 推导租户上下文
-- 组织成员邀请
-- Docker 开发环境
-
-验收标准：FastAPI 服务可以通过 Docker 启动并连接 PostgreSQL；用户可以注册登录、创建组织和 Workspace、邀请成员；JWT 能正确识别用户身份；不同角色访问受 RBAC 限制；任何 API 都不能通过篡改前端 `organization_id` 越权访问其他租户数据。
-
-### 第二阶段：知识库与文档流水线
-
-完成对象存储、文档上传、解析、清洗、切块、Embedding 和状态机。
-
-### 第三阶段：Secure RAG
-
-完成向量搜索、租户过滤、文档 ACL、权限感知检索、重排、Prompt 构造和引用来源。
-
-### 第四阶段：Agent
-
-完成工具注册、Function Calling、知识库搜索、用户信息和工单创建。
-
-### 第五阶段：React SaaS UI
-
-完成登录、Dashboard、知识库、文档、Chat、成员、设置和审计页面。
-
-### 第六阶段：安全加固与交付
-
-完成安全测试、审计查询、密钥管理说明、Docker Compose、部署文档和关键链路测试。
-
-## 6. 待决策事项
-
-以下内容在开始实现前需要明确具体选型，但不影响总体架构：
-
-1. OAuth 2.0 / OIDC 的身份提供商：自建、企业 IdP，还是第三方服务。
-2. 生产对象存储：S3、OSS、COS，或其他 S3 兼容服务。
-3. 向量存储：首版直接使用 PostgreSQL + pgvector，还是从第一版开始使用独立 Vector DB。
-4. 首期 LLM 和 Embedding 服务提供商及模型。
-5. UI 组件库选型。
-6. 是否需要邮箱发送服务来支持成员邀请和 Refresh Token 撤销策略。
-
-## 7. Phase 1 已验证实现
-
-本节补充当前工作树中已通过测试验证的实际状态；前文保留项目原始知识库与目标设计。
-
-### 实际目录
-
-- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型和数据库会话。
-- `backend/alembic`：Alembic 迁移脚本。
-- `tests`：数据库、认证、租户隔离、RBAC、业务 API、Compose 和 API 合约测试。
-- `compose.yaml`、`Dockerfile`、`.env.example`：本地容器开发配置。
-
-### 启动与迁移命令
-
-要求：Python 3.12、`uv` 和 Docker Compose。
+### 启动与环境命令
 
 ```bash
 cp .env.example .env
@@ -541,7 +324,7 @@ uv run alembic upgrade head
 uv run uvicorn backend.app.main:app --reload
 ```
 
-使用容器启动 API 时，迁移单独显式执行：
+容器镜像启动模式：
 
 ```bash
 docker compose up -d postgres
@@ -549,35 +332,9 @@ docker compose run --rm api uv run alembic upgrade head
 docker compose up --build -d api
 ```
 
-可检查健康与 OpenAPI：
+### 测试验证命令
 
 ```bash
-curl -f http://localhost:8000/health
-curl -f http://localhost:8000/openapi.json
+uv run pytest
 ```
-
-### 测试命令
-
-```bash
-uv run pytest -q
-uv run pytest tests/test_api_contract.py -q
-git diff --check
-```
-
-### 当前完成项
-
-- FastAPI 应用骨架、PostgreSQL Schema、Alembic 迁移和 Docker Compose 配置。
-- 用户注册、登录、Profile、Logout、JWT Access Token、Refresh Token 轮换与撤销。
-- Organization、Membership、邀请、Workspace 和 OWNER/ADMIN/EDITOR/VIEWER RBAC。
-- JWT 用户到 Membership 的租户隔离、跨租户拒绝和越权拒绝。
-- 所有业务 API 使用 `/api/v1`；`/health` 保持 200，OpenAPI 可生成。
-- 401、403、404、409、422 统一返回 `{"error":{"code":"...","message":"..."}}`；未预期异常不泄露内部细节。
-- 成功响应使用公开 response model，不暴露 `password_hash`、Refresh Token 哈希或邀请 Token 哈希。
-
-### 尚未实现项
-
-- OAuth 2.0 / OIDC 登录。
-- 知识库、文档上传/解析/切块、向量化和检索。
-- Secure RAG、权限感知检索、LLM 问答和引用来源。
-- Agent、工具调用和外部业务系统集成。
-- React SaaS UI、审计查询、生产部署和进一步安全加固。
+- 全部 130 个测试秒级 PASS，覆盖多租户安全、文档生命周期、向量存储与 API 契约。
