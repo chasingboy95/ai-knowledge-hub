@@ -37,7 +37,15 @@ class InMemoryVectorStore(VectorStore):
             # Check all filter conditions
             matches = True
             for k, v in filters.items():
-                if getattr(record, k, None) != v:
+                if k == "knowledge_base_ids":
+                    kb_strs = [str(x) for x in v]
+                    if str(record.knowledge_base_id) not in kb_strs:
+                        matches = False
+                        break
+                elif getattr(record, k, None) is not None and str(getattr(record, k)) != str(v):
+                    matches = False
+                    break
+                elif getattr(record, k, None) is None:
                     matches = False
                     break
             if not matches:
@@ -48,7 +56,7 @@ class InMemoryVectorStore(VectorStore):
             if r_norm > 0:
                 r_vec = r_vec / r_norm
 
-            sim = float(np.dot(q_vec, r_vec))
+            sim = max(0.0, float(np.dot(q_vec, r_vec)))
             candidates.append((record, sim))
 
         # Sort by similarity descending

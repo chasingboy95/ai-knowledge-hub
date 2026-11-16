@@ -367,7 +367,79 @@ LIMIT :top_k;
 
 ---
 
-## 6. 附录：独立工程图谱索引
+
+---
+
+## 6. Secure RAG 问答与流式会话设计 (Secure RAG & Streaming Chat)
+
+### 6.1 会话与消息实体关系
+```mermaid
+erDiagram
+    workspaces ||--o{ chat_sessions : "has"
+    users ||--o{ chat_sessions : "creates"
+    chat_sessions ||--o{ chat_messages : "contains (cascade)"
+
+    chat_sessions {
+        uuid id PK
+        uuid workspace_id FK
+        uuid user_id FK
+        varchar_255 title
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    chat_messages {
+        uuid id PK
+        uuid session_id FK
+        varchar_20 role
+        text content
+        json context_citations
+        integer tokens_used
+        timestamptz created_at
+    }
+```
+
+### 6.2 SSE 流式时序流 (Server-Sent Events)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 客户端 (Client)
+    participant API as Chat Router (/chat/sessions/{id}/stream)
+    participant Guard as RBAC & Workspace Guard
+    participant RAG as RAGService
+    participant Retriever as SecureRAGRetriever
+    participant LLM as BaseLLMProvider (Mock/OpenAI)
+    participant DB as PostgreSQL DB
+
+    Client->>API: POST .../stream (content, knowledge_base_ids, top_k)
+    API->>Guard: 校验 workspace_id 及知识库归属
+    Guard-->>API: 租户安全确认
+    API->>DB: 写入 User 消息并提交事务
+    API->>Retriever: 执行安全检索 (带 workspace_id 过滤)
+    Retriever-->>API: 返回过滤后的 Top-K 命中文档块 (RetrievedChunks)
+    API-->>Client: event: context (推送引用来源气泡元数据)
+    API->>LLM: 组装带防注入隔离的 Prompt 并调用 stream_generate
+    loop 逐 Token 异步流式输出
+        LLM-->>API: 生成增量 Token
+        API-->>Client: event: token (data: {"token": "..."})
+    end
+    API->>DB: 写入完整 Assistant 消息及引用列表
+    API-->>Client: event: message (包含持久化 ID 与 Token 统计)
+    API-->>Client: event: done (data: [DONE])
+```
+
+### 6.3 权限与端点矩阵 (Chat)
+
+| Method | Path | 权限要求 | 响应状态 | 说明 |
+| :--- | :--- | :--- | :---: | :--- |
+| `POST` | `/.../chat/sessions` | `knowledge:read` | 201 | 创建新对话会话 |
+| `GET` | `/.../chat/sessions` | `knowledge:read` | 200 | 获取会话列表 |
+| `GET` | `/.../chat/sessions/{session_id}` | `knowledge:read` | 200 | 获取会话详情 |
+| `DELETE`| `/.../chat/sessions/{session_id}` | `knowledge:delete` | 204 | 删除会话及级联消息 |
+| `GET` | `/.../chat/sessions/{session_id}/messages` | `knowledge:read` | 200 | 获取会话消息历史 |
+| `POST` | `/.../chat/sessions/{session_id}/stream` | `knowledge:read` | 200 | 发送消息并获取 SSE 流式回答 |
+
+## 7. 附录：独立工程图谱索引
 
 项目内提供独立排版、符合设计系统标准的 HTML 交互图谱，位于 [`docs/diagrams/`](docs/diagrams/)：
 1. **[用户认证与 Token 轮转时序图 (`auth-sequence.html`)](docs/diagrams/auth-sequence.html)**

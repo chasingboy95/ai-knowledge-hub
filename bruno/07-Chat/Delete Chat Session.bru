@@ -1,0 +1,15 @@
+meta {
+  name: Delete Chat Session
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions/{{sessionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}

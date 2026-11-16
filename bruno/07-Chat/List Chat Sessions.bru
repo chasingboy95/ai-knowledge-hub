@@ -1,0 +1,15 @@
+meta {
+  name: List Chat Sessions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions?limit=50&offset=0
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}

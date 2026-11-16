@@ -46,6 +46,9 @@ class PGVectorStore(VectorStore):
             query = query.where(DocumentChunk.workspace_id == UUID(str(filters["workspace_id"])))
         if "knowledge_base_id" in filters:
             query = query.where(DocumentChunk.knowledge_base_id == UUID(str(filters["knowledge_base_id"])))
+        if "knowledge_base_ids" in filters:
+            kb_uuids = [UUID(str(k)) for k in filters["knowledge_base_ids"]]
+            query = query.where(DocumentChunk.knowledge_base_id.in_(kb_uuids))
         if "document_id" in filters:
             query = query.where(DocumentChunk.document_id == UUID(str(filters["document_id"])))
 

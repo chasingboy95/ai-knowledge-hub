@@ -1,0 +1,15 @@
+meta {
+  name: Get Chat Session
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions/{{sessionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}

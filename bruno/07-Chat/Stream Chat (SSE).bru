@@ -1,0 +1,28 @@
+meta {
+  name: Stream Chat (SSE)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/organizations/{{orgId}}/workspaces/{{workspaceId}}/chat/sessions/{{sessionId}}/stream
+  body: json
+  auth: bearer
+}
+
+headers {
+  Accept: text/event-stream
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  {
+    "content": "请依据知识库说明系统的多租户隔离与安全设计。",
+    "knowledge_base_ids": ["{{kbId}}"],
+    "top_k": 5,
+    "min_similarity": 0.3
+  }
+}

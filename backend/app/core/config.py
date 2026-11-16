@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536
 
+    # LLM Settings
+    llm_provider: str = "mock"  # "mock" | "openai"
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.2
+    llm_max_tokens: int = 2048
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
