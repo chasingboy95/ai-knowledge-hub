@@ -147,6 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const switchOrganization = (org: Organization) => {
     setCurrentOrg(org);
+    setCurrentWorkspace(null);
   };
 
   const switchWorkspace = (ws: Workspace) => {
@@ -158,6 +159,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newOrg = res.data;
     setOrganizations((prev) => [...prev, newOrg]);
     setCurrentOrg(newOrg);
+    setCurrentWorkspace(null);
     return newOrg;
   };
 

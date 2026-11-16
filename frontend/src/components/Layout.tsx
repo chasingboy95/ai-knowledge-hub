@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { generateSlug } from '../utils/slug';
 import {
   BookOpen,
   MessageSquare,
@@ -34,12 +35,14 @@ export const Layout: React.FC = () => {
   const [showOrgModal, setShowOrgModal] = useState(false);
   const [orgName, setOrgName] = useState('');
   const [orgSlug, setOrgSlug] = useState('');
+  const [isOrgSlugTouched, setIsOrgSlugTouched] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [isSubmittingOrg, setIsSubmittingOrg] = useState(false);
 
   const [showWsModal, setShowWsModal] = useState(false);
   const [wsName, setWsName] = useState('');
   const [wsSlug, setWsSlug] = useState('');
+  const [isWsSlugTouched, setIsWsSlugTouched] = useState(false);
   const [wsError, setWsError] = useState<string | null>(null);
   const [isSubmittingWs, setIsSubmittingWs] = useState(false);
 
@@ -58,8 +61,13 @@ export const Layout: React.FC = () => {
       setShowOrgModal(false);
       setOrgName('');
       setOrgSlug('');
+      setIsOrgSlugTouched(false);
     } catch (err: any) {
-      setOrgError(err.response?.data?.detail || '创建组织失败，请检查标识是否重复');
+      setOrgError(
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        '创建组织失败，请检查标识是否重复'
+      );
     } finally {
       setIsSubmittingOrg(false);
     }
@@ -75,8 +83,13 @@ export const Layout: React.FC = () => {
       setShowWsModal(false);
       setWsName('');
       setWsSlug('');
+      setIsWsSlugTouched(false);
     } catch (err: any) {
-      setWsError(err.response?.data?.detail || '创建工作区失败，请检查标识是否重复');
+      setWsError(
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        '创建工作区失败，请检查标识是否重复'
+      );
     } finally {
       setIsSubmittingWs(false);
     }
@@ -108,7 +121,13 @@ export const Layout: React.FC = () => {
                 </label>
                 <button
                   type="button"
-                  onClick={() => setShowOrgModal(true)}
+                  onClick={() => {
+                    setOrgName('');
+                    setOrgSlug('');
+                    setIsOrgSlugTouched(false);
+                    setOrgError(null);
+                    setShowOrgModal(true);
+                  }}
                   className="p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
                   title="新建组织"
                 >
@@ -146,7 +165,13 @@ export const Layout: React.FC = () => {
                 </label>
                 <button
                   type="button"
-                  onClick={() => setShowWsModal(true)}
+                  onClick={() => {
+                    setWsName('');
+                    setWsSlug('');
+                    setIsWsSlugTouched(false);
+                    setWsError(null);
+                    setShowWsModal(true);
+                  }}
                   disabled={!currentOrg}
                   className="p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:pointer-events-none"
                   title="新建工作区"
@@ -280,7 +305,13 @@ export const Layout: React.FC = () => {
               <p className="text-sm text-orange-700 mt-1">您当前尚未加入或创建任何组织。请先创建一个组织以开始使用知识库管理与智能 Agent 对话。</p>
             </div>
             <button
-              onClick={() => setShowOrgModal(true)}
+              onClick={() => {
+                setOrgName('');
+                setOrgSlug('');
+                setIsOrgSlugTouched(false);
+                setOrgError(null);
+                setShowOrgModal(true);
+              }}
               className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -294,7 +325,13 @@ export const Layout: React.FC = () => {
               <p className="text-sm text-blue-700 mt-1">知识库与对话会话均按工作区隔离。请先在当前组织下创建一个工作区。</p>
             </div>
             <button
-              onClick={() => setShowWsModal(true)}
+              onClick={() => {
+                setWsName('');
+                setWsSlug('');
+                setIsWsSlugTouched(false);
+                setWsError(null);
+                setShowWsModal(true);
+              }}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -340,9 +377,10 @@ export const Layout: React.FC = () => {
                   required
                   value={orgName}
                   onChange={(e) => {
-                    setOrgName(e.target.value);
-                    if (!orgSlug) {
-                      setOrgSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+                    const val = e.target.value;
+                    setOrgName(val);
+                    if (!isOrgSlugTouched) {
+                      setOrgSlug(generateSlug(val));
                     }
                   }}
                   placeholder="如：技术研发中心"
@@ -358,8 +396,12 @@ export const Layout: React.FC = () => {
                   type="text"
                   required
                   value={orgSlug}
-                  onChange={(e) => setOrgSlug(e.target.value)}
-                  placeholder="如：tech-rd"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setOrgSlug(val);
+                    setIsOrgSlugTouched(val.length > 0);
+                  }}
+                  placeholder="如：tech-rd 或 研发中心"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 font-mono text-xs"
                 />
               </div>
@@ -421,9 +463,10 @@ export const Layout: React.FC = () => {
                   required
                   value={wsName}
                   onChange={(e) => {
-                    setWsName(e.target.value);
-                    if (!wsSlug) {
-                      setWsSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+                    const val = e.target.value;
+                    setWsName(val);
+                    if (!isWsSlugTouched) {
+                      setWsSlug(generateSlug(val));
                     }
                   }}
                   placeholder="如：智能客服专区"
@@ -439,8 +482,12 @@ export const Layout: React.FC = () => {
                   type="text"
                   required
                   value={wsSlug}
-                  onChange={(e) => setWsSlug(e.target.value)}
-                  placeholder="如：customer-support"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setWsSlug(val);
+                    setIsWsSlugTouched(val.length > 0);
+                  }}
+                  placeholder="如：customer-support 或 客服专区"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono text-xs"
                 />
               </div>
