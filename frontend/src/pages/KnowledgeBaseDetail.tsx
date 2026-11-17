@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import {
   FileText,
   Upload,
+  UploadCloud,
   RefreshCw,
   Trash2,
   ArrowLeft,
@@ -13,6 +14,7 @@ import {
   AlertTriangle,
   Layers,
   X,
+  Files,
 } from 'lucide-react';
 
 export interface DocumentItem {
@@ -33,15 +35,25 @@ export interface DocumentChunk {
   page_number?: number;
 }
 
+interface UploadProgress {
+  total: number;
+  completed: number;
+  currentName: string;
+}
+
 export const KnowledgeBaseDetail: React.FC = () => {
   const { id: kbId } = useParams<{ id: string }>();
   const { currentOrg, currentWorkspace } = useAuth();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<DocumentChunk[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocs = async () => {
     if (!currentOrg || !currentWorkspace || !kbId) return;
@@ -62,28 +74,106 @@ export const KnowledgeBaseDetail: React.FC = () => {
     fetchDocs();
   }, [currentOrg, currentWorkspace, kbId]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentOrg || !currentWorkspace || !kbId) return;
+  const uploadFiles = async (fileList: File[] | FileList) => {
+    const rawFiles = Array.from(fileList);
+    // Filter out 0 byte files
+    const validFiles = rawFiles.filter((f) => f.size > 0);
+
+    if (validFiles.length === 0) {
+      alert('请选择有效的非空文件上传');
+      return;
+    }
+    if (!currentOrg || !currentWorkspace || !kbId) return;
 
     setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
+    setUploadProgress({
+      total: validFiles.length,
+      completed: 0,
+      currentName: validFiles[0].name,
+    });
 
-    try {
-      await apiClient.post(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`,
-        formData,
-        {
-          headers: { 'Content-Type': 'multipart/form-data' },
+    let successCount = 0;
+    const failedFiles: { name: string; reason: string }[] = [];
+
+    // Concurrently upload up to 3 files at a time
+    const CONCURRENCY = 3;
+    let index = 0;
+
+    const worker = async () => {
+      while (index < validFiles.length) {
+        const currentIndex = index++;
+        const file = validFiles[currentIndex];
+
+        setUploadProgress((prev) => (prev ? { ...prev, currentName: file.name } : null));
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+          await apiClient.post(
+            `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`,
+            formData,
+            {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            }
+          );
+          successCount++;
+        } catch (err: any) {
+          failedFiles.push({
+            name: file.name,
+            reason: err.response?.data?.detail || err.message || '上传处理失败',
+          });
+        } finally {
+          setUploadProgress((prev) =>
+            prev ? { ...prev, completed: Math.min(prev.completed + 1, prev.total) } : null
+          );
         }
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(CONCURRENCY, validFiles.length) }, () => worker());
+    await Promise.all(workers);
+
+    setUploading(false);
+    setUploadProgress(null);
+    fetchDocs();
+
+    if (failedFiles.length > 0) {
+      alert(
+        `批量上传完成：${successCount} 个文件成功，${failedFiles.length} 个文件失败。\n失败清单：\n` +
+          failedFiles.map((f) => `- ${f.name}: ${f.reason}`).join('\n')
       );
-      fetchDocs();
-    } catch (err: any) {
-      alert(err.response?.data?.detail || '上传文档失败');
-    } finally {
-      setUploading(false);
-      e.target.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only turn off if leaving the current target
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (uploading) return;
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      uploadFiles(e.dataTransfer.files);
     }
   };
 
@@ -154,6 +244,23 @@ export const KnowledgeBaseDetail: React.FC = () => {
 
   return (
     <div className="p-8 max-w-6xl w-full mx-auto space-y-6">
+      {/* Hidden Multi-file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.docx,.md,.txt,.json,.csv"
+        disabled={uploading}
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            uploadFiles(e.target.files);
+            e.target.value = '';
+          }
+        }}
+        className="hidden"
+      />
+
+      {/* Top Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link
@@ -169,17 +276,74 @@ export const KnowledgeBaseDetail: React.FC = () => {
         </div>
 
         {/* Upload Button */}
-        <label className="cursor-pointer px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-2 shadow-sm">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer"
+        >
           <Upload className="w-4 h-4" />
-          <span>{uploading ? '上传解析中...' : '上传文档'}</span>
-          <input
-            type="file"
-            accept=".pdf,.docx,.md,.txt"
-            disabled={uploading}
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-        </label>
+          <span>{uploading ? '上传解析中...' : '上传文档 (可多选)'}</span>
+        </button>
+      </div>
+
+      {/* Drag & Drop Zone */}
+      <div
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => !uploading && fileInputRef.current?.click()}
+        className={`border-2 border-dashed rounded-2xl p-6 transition-all duration-200 cursor-pointer flex flex-col items-center justify-center text-center ${
+          isDragging
+            ? 'border-orange-500 bg-orange-50/80 ring-4 ring-orange-500/10 scale-[1.01]'
+            : 'border-slate-300 hover:border-orange-400 bg-slate-50/60 hover:bg-orange-50/30'
+        }`}
+      >
+        <div
+          className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
+            isDragging ? 'bg-orange-500 text-white scale-110' : 'bg-white text-orange-600 shadow-sm'
+          }`}
+        >
+          {isDragging ? <Files className="w-6 h-6 animate-pulse" /> : <UploadCloud className="w-6 h-6" />}
+        </div>
+        <div className="mt-3 space-y-1">
+          <p className="text-sm font-semibold text-slate-800">
+            {isDragging ? (
+              <span className="text-orange-600 font-bold">释放鼠标立即开始批量上传</span>
+            ) : (
+              <>
+                <span className="text-orange-600 hover:underline">点击选择文件</span> 或将文档拖拽至此处
+              </>
+            )}
+          </p>
+          <p className="text-xs text-slate-500">
+            支持同时拖拽/选择多个文件，格式支持 PDF、DOCX、Markdown、TXT、JSON、CSV
+          </p>
+        </div>
+
+        {/* Uploading progress bar */}
+        {uploading && uploadProgress && (
+          <div className="mt-4 w-full max-w-md bg-white border border-slate-200 rounded-xl p-3 shadow-xs space-y-2 text-left">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+              <span className="truncate pr-2">
+                正在上传并解析: <span className="font-mono text-orange-600">{uploadProgress.currentName}</span>
+              </span>
+              <span className="font-mono text-slate-500 flex-shrink-0">
+                {uploadProgress.completed} / {uploadProgress.total} (
+                {Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%)
+              </span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-orange-600 h-2 rounded-full transition-all duration-300"
+                style={{
+                  width: `${Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Document Table */}
@@ -190,7 +354,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
           <div className="p-12 text-center text-slate-500 space-y-2">
             <FileText className="w-10 h-10 text-slate-300 mx-auto" />
             <p className="text-sm font-semibold">该知识库尚无文档</p>
-            <p className="text-xs text-slate-400">支持 PDF、DOCX、Markdown 及 TXT 格式上传</p>
+            <p className="text-xs text-slate-400">可拖拽上方区域或点击按钮上传首个文档</p>
           </div>
         ) : (
           <table className="w-full text-left border-collapse">
