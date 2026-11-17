@@ -38,6 +38,7 @@ interface CitationSource {
 }
 
 interface ToolCallState {
+  id?: string;
   tool: string;
   args: any;
   result?: any;
@@ -70,6 +71,10 @@ export const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputContent, setInputContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const isStreamingRef = useRef(false);
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Config & Knowledge bases
@@ -105,7 +110,9 @@ export const Chat: React.FC = () => {
   // Load Messages when session changes
   useEffect(() => {
     if (currentOrg && currentWorkspace && currentSessionId) {
-      loadMessages(currentSessionId);
+      if (!isStreamingRef.current) {
+        loadMessages(currentSessionId);
+      }
     } else {
       setMessages([]);
     }
@@ -248,6 +255,8 @@ export const Chat: React.FC = () => {
         if (event.event === 'context') {
           if (Array.isArray(event.data)) {
             citations = event.data;
+          } else if (event.data?.citations && Array.isArray(event.data.citations)) {
+            citations = event.data.citations;
           }
           setMessages((prev) => {
             const next = [...prev];
@@ -258,19 +267,31 @@ export const Chat: React.FC = () => {
             return next;
           });
         } else if (event.event === 'token') {
-          accumulatedTokens += typeof event.data === 'string' ? event.data : '';
-          setMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant') {
-              last.content = accumulatedTokens;
-            }
-            return next;
-          });
+          const tokenStr =
+            typeof event.data === 'string'
+              ? event.data
+              : typeof event.data?.token === 'string'
+              ? event.data.token
+              : '';
+          if (tokenStr) {
+            accumulatedTokens += tokenStr;
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                last.content = accumulatedTokens;
+              }
+              return next;
+            });
+          }
         } else if (event.event === 'tool_call') {
+          const callId = event.data?.tool_call_id || event.data?.id || '';
+          const toolName = event.data?.name || event.data?.tool || '';
+          const toolArgs = event.data?.arguments ?? event.data?.args ?? {};
           activeToolCalls.push({
-            tool: event.data.tool,
-            args: event.data.args,
+            id: callId,
+            tool: toolName,
+            args: toolArgs,
           });
           setMessages((prev) => {
             const next = [...prev];
@@ -281,14 +302,20 @@ export const Chat: React.FC = () => {
             return next;
           });
         } else if (event.event === 'tool_result') {
-          const match = activeToolCalls.find((t) => t.tool === event.data.tool && !t.result);
+          const callId = event.data?.tool_call_id || event.data?.id;
+          const toolName = event.data?.name || event.data?.tool;
+          const toolOutput = event.data?.output ?? event.data?.result;
+          const match = activeToolCalls.find(
+            (t) => (callId && t.id === callId) || (t.tool === toolName && !t.result)
+          );
           if (match) {
-            match.result = event.data.result;
+            match.result = toolOutput;
           } else {
             activeToolCalls.push({
-              tool: event.data.tool,
+              id: callId,
+              tool: toolName,
               args: {},
-              result: event.data.result,
+              result: toolOutput,
             });
           }
           setMessages((prev) => {
@@ -304,6 +331,20 @@ export const Chat: React.FC = () => {
           if (event.data?.content) {
             accumulatedTokens = event.data.content;
           }
+          if (event.data?.context_citations && Array.isArray(event.data.context_citations)) {
+            citations = event.data.context_citations;
+          }
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last && last.role === 'assistant') {
+              last.id = event.data?.id || last.id;
+              last.content = accumulatedTokens;
+              last.context_citations = citations;
+              last.isStreaming = false;
+            }
+            return next;
+          });
         }
       },
       onError: (err) => {
@@ -326,11 +367,15 @@ export const Chat: React.FC = () => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last && last.role === 'assistant') {
+            if (accumulatedTokens && !last.content) {
+              last.content = accumulatedTokens;
+            }
             last.isStreaming = false;
           }
           return next;
         });
         setIsStreaming(false);
+        loadSessions();
       },
     });
   };
