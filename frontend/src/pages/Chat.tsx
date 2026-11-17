@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Sliders,
   CheckCircle2,
+  Cpu,
 } from 'lucide-react';
 
 interface ChatSession {
@@ -75,6 +76,7 @@ export const Chat: React.FC = () => {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [enableAgent, setEnableAgent] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>('');
   const [topK, setTopK] = useState(5);
   const [minSimilarity, setMinSimilarity] = useState(0.3);
   const [showConfig, setShowConfig] = useState(false);
@@ -155,8 +157,7 @@ export const Chat: React.FC = () => {
     if (!currentOrg || !currentWorkspace) return;
     try {
       const res = await apiClient.post<ChatSession>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
-        { title: `新会话 ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` }
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`
       );
       setSessions([res.data, ...sessions]);
       setCurrentSessionId(res.data.id);
@@ -233,6 +234,7 @@ export const Chat: React.FC = () => {
       top_k: topK,
       min_similarity: minSimilarity,
       enable_agent: enableAgent,
+      model: selectedModel.trim() || undefined,
     };
 
     let accumulatedTokens = '';
@@ -438,7 +440,7 @@ export const Chat: React.FC = () => {
               }`}
             >
               <Sliders className="w-3.5 h-3.5" />
-              检索与智能体参数
+              检索与模型参数
             </button>
           </div>
         </div>
@@ -446,22 +448,62 @@ export const Chat: React.FC = () => {
         {/* Config Dropdown Drawer */}
         {showConfig && (
           <div className="bg-slate-900 text-slate-200 border-b border-slate-800 px-6 py-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-xs animate-in slide-in-from-top-2">
-            <div>
-              <label className="font-semibold block mb-1.5 text-slate-300 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                自主 Agent 工具调用 (Multi-turn ReAct)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="enable-agent-check"
-                  checked={enableAgent}
-                  onChange={(e) => setEnableAgent(e.target.checked)}
-                  className="rounded text-purple-600 focus:ring-purple-500"
-                />
-                <label htmlFor="enable-agent-check" className="text-slate-300 cursor-pointer">
-                  允许模型自主调度多步检索与工单提交工具
+            <div className="space-y-3">
+              <div>
+                <label className="font-semibold block mb-1.5 text-slate-300 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  自主 Agent 工具调用 (Multi-turn ReAct)
                 </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="enable-agent-check"
+                    checked={enableAgent}
+                    onChange={(e) => setEnableAgent(e.target.checked)}
+                    className="rounded text-purple-600 focus:ring-purple-500"
+                  />
+                  <label htmlFor="enable-agent-check" className="text-slate-300 cursor-pointer">
+                    允许模型自主调度多步检索与工单提交工具
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold block mb-1 text-slate-300 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                  切换运行模型 (Model)
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={['', 'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(selectedModel) ? selectedModel : 'custom'}
+                    onChange={(e) => {
+                      if (e.target.value !== 'custom') {
+                        setSelectedModel(e.target.value);
+                      } else if (selectedModel === '') {
+                        setSelectedModel('qwen2.5:1.5b');
+                      }
+                    }}
+                    className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">默认 (环境变量配置)</option>
+                    <option value="qwen2.5:1.5b">qwen2.5:1.5b (本地极速测试)</option>
+                    <option value="qwen2.5:3b">qwen2.5:3b (本地均衡推荐)</option>
+                    <option value="qwen2.5:7b">qwen2.5:7b (本地强力通用)</option>
+                    <option value="gpt-4o-mini">gpt-4o-mini</option>
+                    <option value="gpt-4o">gpt-4o</option>
+                    <option value="deepseek-chat">deepseek-chat</option>
+                    <option value="custom">自定义输入名称...</option>
+                  </select>
+                  {!['', 'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(selectedModel) && (
+                    <input
+                      type="text"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      placeholder="如: llama3.2:1b"
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  )}
+                </div>
               </div>
             </div>
 
@@ -538,7 +580,7 @@ export const Chat: React.FC = () => {
               const isUser = msg.role === 'user';
               return (
                 <div
-                  key={msgIdx}
+                  key={msg.id || msgIdx}
                   className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   {!isUser && (
@@ -547,35 +589,47 @@ export const Chat: React.FC = () => {
                     </div>
                   )}
 
-                  <div className={`max-w-2xl space-y-3 ${isUser ? 'items-end' : 'items-start'}`}>
-                    {/* Tool Calls Bubble (Agent events) */}
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="space-y-2 mb-2">
-                        {msg.toolCalls.map((t, tidx) => (
+                  <div
+                    className={`max-w-2xl space-y-3 ${
+                      isUser
+                        ? 'bg-slate-900 text-white rounded-2xl rounded-tr-sm px-4 py-3 shadow-xs'
+                        : 'bg-white border border-slate-200/80 rounded-2xl rounded-tl-sm px-5 py-4 text-slate-800 shadow-xs'
+                    }`}
+                  >
+                    {/* Tool Calls Accordion in Agent mode */}
+                    {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="space-y-2 mb-3 pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-1 rounded w-fit">
+                          <Wrench className="w-3.5 h-3.5" />
+                          <span>Agent 调度工具执行轨迹:</span>
+                        </div>
+                        {msg.toolCalls.map((tc, idx) => (
                           <div
-                            key={tidx}
-                            className="bg-purple-50/80 border border-purple-200 rounded-lg p-3 text-xs space-y-1.5"
+                            key={idx}
+                            className="text-xs border border-purple-100 bg-purple-50/50 rounded-lg p-2.5 space-y-1.5"
                           >
-                            <div className="flex items-center justify-between text-purple-900 font-semibold">
-                              <span className="flex items-center gap-1.5">
-                                <Wrench className="w-3.5 h-3.5 text-purple-600" />
-                                正在执行工具: <code className="bg-purple-100 px-1 py-0.5 rounded">{t.tool}</code>
-                              </span>
-                              {t.result ? (
-                                <span className="text-[11px] text-emerald-600 flex items-center gap-1">
-                                  <CheckCircle2 className="w-3.5 h-3.5" /> 已完成
+                            <div className="flex items-center justify-between font-mono font-bold text-purple-900">
+                              <span>🛠️ 工具: {tc.tool}</span>
+                              {tc.result ? (
+                                <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-sans">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  执行完成
                                 </span>
                               ) : (
-                                <span className="text-[11px] text-purple-500 animate-pulse">执行中...</span>
+                                <span className="text-[10px] text-purple-600 animate-pulse font-sans">
+                                  调用执行中...
+                                </span>
                               )}
                             </div>
-                            <div className="text-[11px] text-slate-600 bg-white/70 p-2 rounded font-mono break-all border border-purple-100">
-                              参数: {JSON.stringify(t.args)}
+                            <div className="text-[11px] bg-white/80 p-1.5 rounded border border-purple-100/60 font-mono text-slate-600 truncate">
+                              入参: {JSON.stringify(tc.args)}
                             </div>
-                            {t.result && (
-                              <div className="text-[11px] text-slate-700 bg-purple-100/50 p-2 rounded font-mono break-all">
-                                结果: {JSON.stringify(t.result).slice(0, 200)}
-                                {JSON.stringify(t.result).length > 200 ? '...' : ''}
+                            {tc.result && (
+                              <div className="text-[11px] bg-white/90 p-1.5 rounded border border-slate-200 text-slate-700">
+                                <span className="font-semibold text-slate-500 block mb-0.5">观察反馈 (Observation):</span>
+                                <p className="line-clamp-3 italic">
+                                  {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result)}
+                                </p>
                               </div>
                             )}
                           </div>
@@ -583,18 +637,9 @@ export const Chat: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Main Message Bubble */}
-                    <div
-                      className={`p-4 rounded-2xl text-sm leading-relaxed ${
-                        isUser
-                          ? 'bg-orange-600 text-white rounded-tr-none shadow-sm'
-                          : 'bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-xs'
-                      }`}
-                    >
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
-                      {msg.isStreaming && (
-                        <span className="inline-block w-2 h-4 ml-1 bg-orange-500 animate-pulse align-middle" />
-                      )}
+                    {/* Message Body */}
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {msg.content || (msg.isStreaming ? '正在思考中...' : '')}
                     </div>
 
                     {/* Citations Badges & Drawer */}

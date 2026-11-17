@@ -40,6 +40,7 @@ class AgentRunner:
         session: ChatSession,
         user_prompt: str,
         history: list[dict[str, str]] | None = None,
+        model: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run multi-turn agent ReAct loop with real-time SSE stream events."""
         # 1. Record user message
@@ -79,13 +80,17 @@ class AgentRunner:
             db=db,
         )
 
+        llm_kwargs: dict[str, Any] = {}
+        if model:
+            llm_kwargs["model"] = model
+
         step = 0
         executed_tools_summary: list[dict[str, Any]] = []
 
         while step < self.max_steps:
             step += 1
             # Ask LLM for next action
-            resp = await self.llm_provider.generate(messages=messages, tools=openai_tools)
+            resp = await self.llm_provider.generate(messages=messages, tools=openai_tools, **llm_kwargs)
 
             if not resp.tool_calls:
                 # No more tools called, LLM generates final answer
@@ -93,7 +98,7 @@ class AgentRunner:
                 final_text = resp.content
                 if not final_text:
                     # Stream tokens if non-streaming generate was empty
-                    async for token in self.llm_provider.stream_generate(messages):
+                    async for token in self.llm_provider.stream_generate(messages, **llm_kwargs):
                         yield {"event": "token", "data": {"token": token}}
                         final_text += token
                 else:

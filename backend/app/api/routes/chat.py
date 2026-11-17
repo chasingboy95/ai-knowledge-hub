@@ -72,8 +72,8 @@ async def create_chat_session(
 async def list_chat_sessions(
     organization_id: UUID,
     workspace_id: UUID,
-    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
     _: Membership = Depends(require_permission("knowledge:read")),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -81,8 +81,8 @@ async def list_chat_sessions(
     return await rag_service.list_sessions(
         db=db,
         workspace_id=workspace_id,
-        limit=limit,
         offset=offset,
+        limit=limit,
     )
 
 
@@ -107,14 +107,13 @@ async def get_chat_session(
 
 @router.delete(
     "/{organization_id}/workspaces/{workspace_id}/chat/sessions/{session_id}",
-    response_model=None,
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_chat_session(
     organization_id: UUID,
     workspace_id: UUID,
     session_id: UUID,
-    _: Membership = Depends(require_permission("knowledge:delete")),
+    _: Membership = Depends(require_permission("knowledge:read")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -182,6 +181,7 @@ async def stream_chat_message(
             "enable_agent": payload.enable_agent,
             "prompt_length": len(payload.content),
             "top_k": payload.top_k,
+            "model": payload.model,
         },
     )
 
@@ -197,6 +197,7 @@ async def stream_chat_message(
                 session=session,
                 user_prompt=payload.content,
                 history=history,
+                model=payload.model,
             )
         else:
             generator = rag_service.stream_chat(
@@ -208,6 +209,7 @@ async def stream_chat_message(
                 knowledge_base_ids=payload.knowledge_base_ids,
                 top_k=payload.top_k,
                 min_similarity=payload.min_similarity,
+                model=payload.model,
             )
 
         async for chunk in generator:

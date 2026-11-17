@@ -40,6 +40,7 @@ class ChatMessageCreate(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
     enable_agent: bool = Field(default=False, description="是否启用 Agent 自主工具调用模式")
+    model: str | None = Field(default=None, description="指定调用的具体模型名称，如 qwen2.5:1.5b 或 gpt-4o")
 
 
 class ChatMessageResponse(BaseModel):

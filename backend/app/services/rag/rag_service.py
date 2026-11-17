@@ -6,12 +6,14 @@ from fastapi import HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core.config import Settings
 from backend.app.models.chat import ChatMessage, ChatSession, MessageRole
-from backend.app.models.workspace import Workspace
-from backend.app.schemas.chat import CitationSource
-from backend.app.services.llm import BaseLLMProvider
+from backend.app.services.embeddings import get_embedding_provider
+from backend.app.services.llm import get_llm_provider
+from backend.app.services.llm.base import BaseLLMProvider
 from backend.app.services.rag.prompt_builder import PromptBuilder
 from backend.app.services.rag.retriever import RetrievedChunk, SecureRAGRetriever
+from backend.app.services.vector_store import get_vector_store
 
 
 class RAGService:
@@ -23,12 +25,6 @@ class RAGService:
         self.retriever = retriever
         self.llm_provider = llm_provider
 
-    async def get_workspace_or_404(self, db: AsyncSession, workspace_id: UUID) -> Workspace:
-        ws = await db.scalar(select(Workspace).where(Workspace.id == workspace_id))
-        if not ws:
-            raise HTTPException(status_code=404, detail="Workspace not found")
-        return ws
-
     async def create_session(
         self,
         db: AsyncSession,
@@ -36,11 +32,10 @@ class RAGService:
         user_id: UUID | None,
         title: str | None = None,
     ) -> ChatSession:
-        await self.get_workspace_or_404(db, workspace_id)
         session = ChatSession(
             workspace_id=workspace_id,
             user_id=user_id,
-            title=title.strip() if title else "新建对话",
+            title=title or "新建对话",
         )
         db.add(session)
         await db.commit()
@@ -51,10 +46,9 @@ class RAGService:
         self,
         db: AsyncSession,
         workspace_id: UUID,
-        limit: int = 50,
         offset: int = 0,
+        limit: int = 20,
     ) -> list[ChatSession]:
-        await self.get_workspace_or_404(db, workspace_id)
         stmt = (
             select(ChatSession)
             .where(ChatSession.workspace_id == workspace_id)
@@ -109,16 +103,14 @@ class RAGService:
     def _format_citations(self, chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
         citations = []
         for c in chunks:
-            citations.append(
-                CitationSource(
-                    document_id=c.document_id,
-                    document_title=c.document_title,
-                    chunk_index=c.chunk_index,
-                    page_number=c.page_number,
-                    similarity=c.similarity,
-                    text_snippet=c.content[:200],
-                ).model_dump(mode="json")
-            )
+            citations.append({
+                "document_id": str(c.document_id),
+                "document_title": c.document_title,
+                "chunk_index": c.chunk_index,
+                "page_number": c.page_number,
+                "similarity": round(c.similarity, 4),
+                "text_snippet": c.content[:200],
+            })
         return citations
 
     async def stream_chat(
@@ -131,6 +123,7 @@ class RAGService:
         knowledge_base_ids: list[UUID] | None = None,
         top_k: int = 5,
         min_similarity: float = 0.3,
+        model: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         session = await self.get_session(db, workspace_id, session_id)
 
@@ -180,9 +173,13 @@ class RAGService:
             history=history,
         )
 
+        llm_kwargs: dict[str, Any] = {}
+        if model:
+            llm_kwargs["model"] = model
+
         # 5. Stream LLM generation
         full_assistant_content: list[str] = []
-        async for token in self.llm_provider.stream_generate(prompt_messages):
+        async for token in self.llm_provider.stream_generate(prompt_messages, **llm_kwargs):
             full_assistant_content.append(token)
             yield {
                 "event": "token",
@@ -203,7 +200,7 @@ class RAGService:
         await db.commit()
         await db.refresh(assistant_msg)
 
-        # Yield message event
+        # 7. Yield complete message event & done
         yield {
             "event": "message",
             "data": {
@@ -216,9 +213,15 @@ class RAGService:
                 "created_at": assistant_msg.created_at.isoformat(),
             },
         }
-
-        # Yield done event
         yield {
             "event": "done",
             "data": "[DONE]",
         }
+
+
+def get_rag_service(settings: Settings) -> RAGService:
+    embedding_provider = get_embedding_provider(settings)
+    vector_store = get_vector_store(settings)
+    retriever = SecureRAGRetriever(vector_store=vector_store, embedding_provider=embedding_provider)
+    llm_provider = get_llm_provider(settings)
+    return RAGService(retriever=retriever, llm_provider=llm_provider)
