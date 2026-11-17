@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import { fetchSSE } from '../api/sse';
+import { MarkdownView } from '../components/MarkdownView';
 import {
   MessageSquare,
   Plus,
@@ -682,10 +683,14 @@ export const Chat: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Message Body */}
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
-                      {msg.content || (msg.isStreaming ? '正在思考中...' : '')}
-                    </div>
+                    {/* Message Body with Markdown formatting */}
+                    {msg.content ? (
+                      <MarkdownView content={msg.content} isUser={isUser} />
+                    ) : (
+                      <div className="text-sm text-slate-400 italic">
+                        {msg.isStreaming ? '正在思考中...' : ''}
+                      </div>
+                    )}
 
                     {/* Citations Badges & Drawer */}
                     {!isUser && msg.context_citations && msg.context_citations.length > 0 && (
