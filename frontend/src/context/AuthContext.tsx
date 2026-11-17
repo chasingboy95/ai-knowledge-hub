@@ -33,7 +33,7 @@ interface AuthContextType {
   logout: () => void;
   switchOrganization: (org: Organization) => void;
   switchWorkspace: (ws: Workspace) => void;
-  refreshWorkspaces: () => Promise<void>;
+  refreshWorkspaces: (targetOrg?: Organization | null) => Promise<void>;
   refreshOrganizations: () => Promise<void>;
   createOrganization: (name: string, slug: string) => Promise<Organization>;
   createWorkspace: (name: string, slug: string) => Promise<Workspace>;
@@ -65,6 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentOrg(null);
         setWorkspaces([]);
         setCurrentWorkspace(null);
+        localStorage.removeItem('current_org_id');
+        localStorage.removeItem('current_workspace_id');
       }
     } catch {
       logout();
@@ -73,21 +75,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const refreshWorkspaces = async () => {
-    if (!currentOrg) {
+  const refreshWorkspaces = async (targetOrg?: Organization | null) => {
+    const org = targetOrg !== undefined ? targetOrg : currentOrg;
+    if (!org) {
       setWorkspaces([]);
       setCurrentWorkspace(null);
       return;
     }
     try {
-      const wsRes = await apiClient.get<Workspace[]>(`/organizations/${currentOrg.id}/workspaces`);
+      const wsRes = await apiClient.get<Workspace[]>(`/organizations/${org.id}/workspaces`);
       setWorkspaces(wsRes.data);
       if (wsRes.data.length > 0) {
-        const savedWsId = localStorage.getItem('current_workspace_id');
+        const savedWsId =
+          localStorage.getItem(`current_workspace_id_${org.id}`) ||
+          localStorage.getItem('current_workspace_id');
         const defaultWs = wsRes.data.find((w) => w.id === savedWsId) || wsRes.data[0];
         setCurrentWorkspace(defaultWs);
       } else {
         setCurrentWorkspace(null);
+        localStorage.removeItem(`current_workspace_id_${org.id}`);
       }
     } catch (err) {
       console.error('Failed to load workspaces', err);
@@ -105,19 +111,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (currentOrg) {
       localStorage.setItem('current_org_id', currentOrg.id);
-      refreshWorkspaces();
-    } else {
-      localStorage.removeItem('current_org_id');
-      setWorkspaces([]);
-      setCurrentWorkspace(null);
+      refreshWorkspaces(currentOrg);
     }
   }, [currentOrg]);
 
   useEffect(() => {
     if (currentWorkspace) {
       localStorage.setItem('current_workspace_id', currentWorkspace.id);
-    } else {
-      localStorage.removeItem('current_workspace_id');
+      localStorage.setItem(`current_workspace_id_${currentWorkspace.organization_id}`, currentWorkspace.id);
     }
   }, [currentWorkspace]);
 
@@ -137,6 +138,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('current_org_id');
     localStorage.removeItem('current_workspace_id');
+    const keysToRemove = Object.keys(localStorage).filter((k) => k.startsWith('current_workspace_id_'));
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
     setToken(null);
     setUser(null);
     setOrganizations([]);
