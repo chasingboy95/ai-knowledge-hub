@@ -51,7 +51,7 @@ def check_session_access(session: ChatSession, current_user: User, membership: M
 async def create_chat_session(
     organization_id: UUID,
     workspace_id: UUID,
-    payload: ChatSessionCreate,
+    payload: ChatSessionCreate | None = None,
     _: Membership = Depends(require_permission("knowledge:read")),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
@@ -61,7 +61,7 @@ async def create_chat_session(
         db=db,
         workspace_id=workspace_id,
         user_id=current_user.id,
-        title=payload.title,
+        title=payload.title if payload else None,
     )
     await record_audit_log(
         db=db,

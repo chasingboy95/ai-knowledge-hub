@@ -174,7 +174,8 @@ export const Chat: React.FC = () => {
     if (!currentOrg || !currentWorkspace) return;
     try {
       const res = await apiClient.post<ChatSession>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`
+        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
+        { title: "新建对话" }
       );
       setSessions([res.data, ...sessions]);
       setCurrentSessionId(res.data.id);
