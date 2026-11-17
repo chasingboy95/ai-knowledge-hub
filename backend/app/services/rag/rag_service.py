@@ -219,7 +219,6 @@ class RAGService:
 
 def get_rag_service(settings: Settings) -> RAGService:
     embedding_provider = get_embedding_provider(settings)
-    vector_store = get_vector_store(settings)
-    retriever = SecureRAGRetriever(vector_store=vector_store, embedding_provider=embedding_provider)
+    retriever = SecureRAGRetriever(embedding_provider=embedding_provider)
     llm_provider = get_llm_provider(settings)
     return RAGService(retriever=retriever, llm_provider=llm_provider)
