@@ -46,16 +46,14 @@ class RAGService:
         self,
         db: AsyncSession,
         workspace_id: UUID,
+        user_id: UUID | None = None,
         offset: int = 0,
         limit: int = 20,
     ) -> list[ChatSession]:
-        stmt = (
-            select(ChatSession)
-            .where(ChatSession.workspace_id == workspace_id)
-            .order_by(desc(ChatSession.updated_at))
-            .offset(offset)
-            .limit(limit)
-        )
+        stmt = select(ChatSession).where(ChatSession.workspace_id == workspace_id)
+        if user_id is not None:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        stmt = stmt.order_by(desc(ChatSession.updated_at)).offset(offset).limit(limit)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 

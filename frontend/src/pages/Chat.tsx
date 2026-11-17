@@ -24,6 +24,7 @@ import {
 interface ChatSession {
   id: string;
   workspace_id: string;
+  user_id?: string | null;
   title: string;
   created_at: string;
   updated_at: string;
@@ -61,7 +62,7 @@ interface KnowledgeBase {
 }
 
 export const Chat: React.FC = () => {
-  const { currentOrg, currentWorkspace } = useAuth();
+  const { user, currentOrg, currentWorkspace, isOwnerOrAdmin } = useAuth();
 
   // Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -156,8 +157,16 @@ export const Chat: React.FC = () => {
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}/messages`
       );
       setMessages(res.data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load messages', err);
+      if (err.response?.status === 403) {
+        setMessages([
+          {
+            role: 'assistant',
+            content: '⚠️ 该对话属于其他成员的私有会话，您无权查阅其历史记录。',
+          },
+        ]);
+      }
     }
   };
 
@@ -408,6 +417,11 @@ export const Chat: React.FC = () => {
           <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
             <MessageSquare className="w-4 h-4 text-orange-600" />
             <span>历史会话</span>
+            {isOwnerOrAdmin && (
+              <span className="text-[10px] bg-slate-100 text-slate-500 font-normal px-1.5 py-0.5 rounded" title="管理员可见当前工作区全员会话">
+                全员视图
+              </span>
+            )}
           </div>
           <button
             onClick={handleCreateSession}
@@ -422,7 +436,7 @@ export const Chat: React.FC = () => {
           {loadingSessions ? (
             <div className="p-4 text-center text-xs text-slate-400">加载会话中...</div>
           ) : sessions.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">暂无会话，点击右上角新建</div>
+            <div className="p-8 text-center text-xs text-slate-400">暂无个人会话，点击右上角新建</div>
           ) : (
             sessions.map((s) => {
               const isSelected = s.id === currentSessionId;
@@ -437,7 +451,14 @@ export const Chat: React.FC = () => {
                   }`}
                 >
                   <div className="truncate flex-1 pr-2">
-                    <p className="truncate font-medium">{s.title}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="truncate font-medium">{s.title}</p>
+                      {isOwnerOrAdmin && s.user_id && s.user_id !== user?.id && (
+                        <span className="text-[9px] bg-slate-200 text-slate-600 px-1 py-0.2 rounded shrink-0">
+                          成员
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-slate-400">
                       {new Date(s.updated_at).toLocaleDateString()}
                     </span>
