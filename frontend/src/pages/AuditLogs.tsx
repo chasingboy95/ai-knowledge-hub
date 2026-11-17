@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import {
   ShieldAlert,
+  Shield,
   Filter,
   RefreshCw,
   Clock,
@@ -18,6 +19,9 @@ import {
   FolderPlus,
   FolderMinus,
   MessageSquare,
+  Search,
+  RotateCcw,
+  Calendar,
 } from 'lucide-react';
 
 interface AuditLog {
@@ -36,13 +40,17 @@ interface AuditLog {
 }
 
 export const AuditLogs: React.FC = () => {
-  const { currentOrg } = useAuth();
+  const { currentOrg, workspaces } = useAuth();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [selectedEventType, setSelectedEventType] = useState<string>('');
+  const [selectedResourceType, setSelectedResourceType] = useState<string>('');
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
+  const [dateRange, setDateRange] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPayload, setSelectedPayload] = useState<any | null>(null);
 
   const fetchLogs = async () => {
@@ -52,6 +60,25 @@ export const AuditLogs: React.FC = () => {
     try {
       const params: Record<string, any> = { limit: 100 };
       if (selectedEventType) params.event_type = selectedEventType;
+      if (selectedResourceType) params.resource_type = selectedResourceType;
+      if (selectedWorkspaceId) params.workspace_id = selectedWorkspaceId;
+      if (searchQuery.trim()) params.query = searchQuery.trim();
+
+      // Date range calculation
+      if (dateRange !== 'all') {
+        const now = new Date();
+        let startTime = new Date();
+        if (dateRange === 'today') {
+          startTime.setHours(0, 0, 0, 0);
+        } else if (dateRange === '3days') {
+          startTime.setDate(now.getDate() - 3);
+        } else if (dateRange === '7days') {
+          startTime.setDate(now.getDate() - 7);
+        } else if (dateRange === '30days') {
+          startTime.setDate(now.getDate() - 30);
+        }
+        params.start_time = startTime.toISOString();
+      }
 
       const res = await apiClient.get<AuditLog[]>(`/organizations/${currentOrg.id}/audit-logs`, {
         params,
@@ -66,7 +93,20 @@ export const AuditLogs: React.FC = () => {
 
   useEffect(() => {
     fetchLogs();
-  }, [currentOrg, selectedEventType]);
+  }, [currentOrg, selectedEventType, selectedResourceType, selectedWorkspaceId, dateRange]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchLogs();
+  };
+
+  const resetFilters = () => {
+    setSelectedEventType('');
+    setSelectedResourceType('');
+    setSelectedWorkspaceId('');
+    setDateRange('all');
+    setSearchQuery('');
+  };
 
   const getEventBadge = (eventType: string) => {
     switch (eventType) {
@@ -166,6 +206,12 @@ export const AuditLogs: React.FC = () => {
             <UserCheck className="w-3 h-3" /> 接受成员邀请
           </span>
         );
+      case 'MEMBER_ROLE_UPDATE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+            <Shield className="w-3 h-3" /> 成员权限变更
+          </span>
+        );
       case 'MEMBER_REMOVE':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-200">
@@ -193,46 +239,139 @@ export const AuditLogs: React.FC = () => {
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            追踪当前租户内的一切敏感业务与 AI 操作轨迹，提供严格不可篡改的事后追溯与合规分析。
+            追踪当前租户内的一切敏感业务与 AI 操作轨迹，提供多维度精确筛选与合规追溯。
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-2xs">
+        <button
+          onClick={fetchLogs}
+          disabled={isLoading}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition cursor-pointer self-start sm:self-auto"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+          刷新日志
+        </button>
+      </div>
+
+      {/* Common Filters Bar */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Filter: Event Type */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <Filter className="w-3.5 h-3.5 text-slate-400" />
             <select
               value={selectedEventType}
               onChange={(e) => setSelectedEventType(e.target.value)}
-              className="text-xs bg-transparent text-slate-700 focus:outline-none"
+              className="bg-transparent focus:outline-none cursor-pointer"
             >
               <option value="">全部事件类型</option>
-              <option value="AUTH_LOGIN">AUTH_LOGIN (用户登录)</option>
-              <option value="ORGANIZATION_CREATE">ORGANIZATION_CREATE (创建组织)</option>
-              <option value="WORKSPACE_CREATE">WORKSPACE_CREATE (创建工作区)</option>
-              <option value="WORKSPACE_UPDATE">WORKSPACE_UPDATE (更新工作区)</option>
-              <option value="WORKSPACE_DELETE">WORKSPACE_DELETE (删除工作区)</option>
-              <option value="KNOWLEDGE_BASE_CREATE">KNOWLEDGE_BASE_CREATE (创建知识库)</option>
-              <option value="KNOWLEDGE_BASE_UPDATE">KNOWLEDGE_BASE_UPDATE (更新知识库)</option>
-              <option value="KNOWLEDGE_BASE_DELETE">KNOWLEDGE_BASE_DELETE (删除知识库)</option>
-              <option value="DOCUMENT_UPLOAD">DOCUMENT_UPLOAD (文档上传)</option>
-              <option value="DOCUMENT_DELETE">DOCUMENT_DELETE (文档删除)</option>
-              <option value="CHAT_SESSION_CREATE">CHAT_SESSION_CREATE (创建问答会话)</option>
-              <option value="CHAT_SESSION_DELETE">CHAT_SESSION_DELETE (删除问答会话)</option>
-              <option value="RAG_QUERY">RAG_QUERY (RAG 检索提问)</option>
-              <option value="AGENT_TOOL_CALL">AGENT_TOOL_CALL (智能体工具调用)</option>
-              <option value="MEMBER_INVITE">MEMBER_INVITE (邀请成员)</option>
-              <option value="MEMBER_ACCEPT_INVITE">MEMBER_ACCEPT_INVITE (接受邀请)</option>
-              <option value="MEMBER_REMOVE">MEMBER_REMOVE (移除成员)</option>
+              <optgroup label="🔐 认证与账号">
+                <option value="AUTH_LOGIN">AUTH_LOGIN (用户登录)</option>
+              </optgroup>
+              <optgroup label="🏢 组织与工作区">
+                <option value="ORGANIZATION_CREATE">ORGANIZATION_CREATE (创建组织)</option>
+                <option value="WORKSPACE_CREATE">WORKSPACE_CREATE (创建工作区)</option>
+                <option value="WORKSPACE_UPDATE">WORKSPACE_UPDATE (更新工作区)</option>
+                <option value="WORKSPACE_DELETE">WORKSPACE_DELETE (删除工作区)</option>
+              </optgroup>
+              <optgroup label="📚 知识库与文档">
+                <option value="KNOWLEDGE_BASE_CREATE">KNOWLEDGE_BASE_CREATE (创建知识库)</option>
+                <option value="KNOWLEDGE_BASE_UPDATE">KNOWLEDGE_BASE_UPDATE (更新知识库)</option>
+                <option value="KNOWLEDGE_BASE_DELETE">KNOWLEDGE_BASE_DELETE (删除知识库)</option>
+                <option value="DOCUMENT_UPLOAD">DOCUMENT_UPLOAD (文档上传)</option>
+                <option value="DOCUMENT_DELETE">DOCUMENT_DELETE (文档删除)</option>
+              </optgroup>
+              <optgroup label="💬 对话与智能体">
+                <option value="CHAT_SESSION_CREATE">CHAT_SESSION_CREATE (创建会话)</option>
+                <option value="CHAT_SESSION_DELETE">CHAT_SESSION_DELETE (删除会话)</option>
+                <option value="RAG_QUERY">RAG_QUERY (RAG 语义问答)</option>
+                <option value="AGENT_TOOL_CALL">AGENT_TOOL_CALL (Agent 工具调用)</option>
+              </optgroup>
+              <optgroup label="👥 成员与权限">
+                <option value="MEMBER_INVITE">MEMBER_INVITE (邀请成员)</option>
+                <option value="MEMBER_ACCEPT_INVITE">MEMBER_ACCEPT_INVITE (接受邀请)</option>
+                <option value="MEMBER_ROLE_UPDATE">MEMBER_ROLE_UPDATE (权限角色变更)</option>
+                <option value="MEMBER_REMOVE">MEMBER_REMOVE (移除成员)</option>
+              </optgroup>
             </select>
           </div>
 
+          {/* Filter: Resource Type */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
+            <Layers className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={selectedResourceType}
+              onChange={(e) => setSelectedResourceType(e.target.value)}
+              className="bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="">全部资源类型</option>
+              <option value="user">user (用户)</option>
+              <option value="organization">organization (组织)</option>
+              <option value="workspace">workspace (工作区)</option>
+              <option value="knowledge_base">knowledge_base (知识库)</option>
+              <option value="document">document (文档)</option>
+              <option value="chat_session">chat_session (问答会话)</option>
+              <option value="invitation">invitation (邀请)</option>
+              <option value="membership">membership (成员关系)</option>
+            </select>
+          </div>
+
+          {/* Filter: Workspace */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
+            <Building2 className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={selectedWorkspaceId}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+              className="bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="">全部工作区</option>
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filter: Date Range */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value)}
+              className="bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="all">全部时间</option>
+              <option value="today">今天</option>
+              <option value="3days">近 3 天</option>
+              <option value="7days">近 7 天</option>
+              <option value="30days">近 30 天</option>
+            </select>
+          </div>
+
+          {/* Filter: Keyword Search */}
+          <form onSubmit={handleSearchSubmit} className="flex-1 min-w-[200px] flex items-center">
+            <div className="relative w-full">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索操作人邮箱、资源ID或事件..."
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2 pointer-events-none" />
+            </div>
+          </form>
+
+          {/* Reset Filters */}
           <button
-            onClick={fetchLogs}
-            disabled={isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition"
+            type="button"
+            onClick={resetFilters}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+            title="重置全部筛选条件"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            刷新
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>重置</span>
           </button>
         </div>
       </div>
@@ -299,7 +438,7 @@ export const AuditLogs: React.FC = () => {
                         {log.payload ? (
                           <button
                             onClick={() => setSelectedPayload(log.payload)}
-                            className="inline-flex items-center gap-1 text-[11px] text-orange-600 hover:text-orange-700 font-medium px-2 py-0.5 rounded hover:bg-orange-50 transition"
+                            className="inline-flex items-center gap-1 text-[11px] text-orange-600 hover:text-orange-700 font-medium px-2 py-0.5 rounded hover:bg-orange-50 transition cursor-pointer"
                           >
                             <FileCode className="w-3.5 h-3.5" />
                             <span>查看 JSON</span>
@@ -328,7 +467,7 @@ export const AuditLogs: React.FC = () => {
               </h3>
               <button
                 onClick={() => setSelectedPayload(null)}
-                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded"
+                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded cursor-pointer"
               >
                 关闭
               </button>

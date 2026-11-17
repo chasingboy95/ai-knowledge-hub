@@ -10,11 +10,12 @@ import {
   Trash2,
   ArrowLeft,
   CheckCircle,
-  Clock,
   AlertTriangle,
   Layers,
   X,
   Files,
+  ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 
 export interface DocumentItem {
@@ -43,9 +44,10 @@ interface UploadProgress {
 
 export const KnowledgeBaseDetail: React.FC = () => {
   const { id: kbId } = useParams<{ id: string }>();
-  const { currentOrg, currentWorkspace } = useAuth();
+  const { currentOrg, currentWorkspace, hasPermission } = useAuth();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -55,9 +57,14 @@ export const KnowledgeBaseDetail: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchDocs = async () => {
+  const canUpload = hasPermission('document:upload');
+  const canDelete = hasPermission('document:delete');
+  const canReindex = hasPermission('knowledge:update');
+
+  const fetchDocs = async (silent: boolean = false) => {
     if (!currentOrg || !currentWorkspace || !kbId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
+    setIsRefreshing(true);
     try {
       const res = await apiClient.get<DocumentItem[]>(
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`
@@ -66,7 +73,8 @@ export const KnowledgeBaseDetail: React.FC = () => {
     } catch (err) {
       console.error('Failed to load documents', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -74,7 +82,29 @@ export const KnowledgeBaseDetail: React.FC = () => {
     fetchDocs();
   }, [currentOrg, currentWorkspace, kbId]);
 
+  // Check if any document is currently being parsed or indexed
+  const hasProcessingDocs = documents.some(
+    (d) => d.status !== 'READY' && d.status !== 'FAILED'
+  );
+
+  // Auto-refresh polling loop: polls every 2.5s whenever there are active processing documents or ongoing upload
+  useEffect(() => {
+    let timer: any = null;
+    if (hasProcessingDocs || uploading) {
+      timer = setInterval(() => {
+        fetchDocs(true);
+      }, 2500);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [hasProcessingDocs, uploading, currentOrg, currentWorkspace, kbId]);
+
   const uploadFiles = async (fileList: File[] | FileList) => {
+    if (!canUpload) {
+      alert('您当前的角色权限不支持上传文档');
+      return;
+    }
     const rawFiles = Array.from(fileList);
     // Filter out 0 byte files
     const validFiles = rawFiles.filter((f) => f.size > 0);
@@ -118,6 +148,8 @@ export const KnowledgeBaseDetail: React.FC = () => {
             }
           );
           successCount++;
+          // Fetch immediately after each upload completes to show latest status in table
+          fetchDocs(true);
         } catch (err: any) {
           failedFiles.push({
             name: file.name,
@@ -136,7 +168,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
 
     setUploading(false);
     setUploadProgress(null);
-    fetchDocs();
+    fetchDocs(true);
 
     if (failedFiles.length > 0) {
       alert(
@@ -149,19 +181,20 @@ export const KnowledgeBaseDetail: React.FC = () => {
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!canUpload) return;
     if (!isDragging) setIsDragging(true);
   };
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!canUpload) return;
     setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only turn off if leaving the current target
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragging(false);
   };
@@ -170,7 +203,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (uploading) return;
+    if (!canUpload || uploading) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       uploadFiles(e.dataTransfer.files);
@@ -178,18 +211,20 @@ export const KnowledgeBaseDetail: React.FC = () => {
   };
 
   const handleReindex = async (docId: string) => {
+    if (!canReindex) return;
     if (!currentOrg || !currentWorkspace || !kbId) return;
     try {
       await apiClient.post(
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}/reindex`
       );
-      fetchDocs();
+      fetchDocs(true);
     } catch (err: any) {
       alert(err.response?.data?.detail || '重新索引触发失败');
     }
   };
 
   const handleDelete = async (docId: string) => {
+    if (!canDelete) return;
     if (!window.confirm('确认删除此文档并物理清理切块与向量？')) return;
     if (!currentOrg || !currentWorkspace || !kbId) return;
 
@@ -197,7 +232,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
       await apiClient.delete(
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}`
       );
-      fetchDocs();
+      fetchDocs(true);
     } catch (err: any) {
       alert(err.response?.data?.detail || '删除文档失败');
     }
@@ -235,8 +270,8 @@ export const KnowledgeBaseDetail: React.FC = () => {
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-200">
-            <Clock className="w-3 h-3" /> 处理中 ({status})
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-200 animate-pulse">
+            <Loader2 className="w-3 h-3 animate-spin" /> 处理中 ({status})
           </span>
         );
     }
@@ -250,7 +285,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
         type="file"
         multiple
         accept=".pdf,.docx,.md,.txt,.json,.csv"
-        disabled={uploading}
+        disabled={uploading || !canUpload}
         onChange={(e) => {
           if (e.target.files && e.target.files.length > 0) {
             uploadFiles(e.target.files);
@@ -276,85 +311,120 @@ export const KnowledgeBaseDetail: React.FC = () => {
         </div>
 
         {/* Upload Button */}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer"
-        >
-          <Upload className="w-4 h-4" />
-          <span>{uploading ? '上传解析中...' : '上传文档 (可多选)'}</span>
-        </button>
-      </div>
-
-      {/* Drag & Drop Zone */}
-      <div
-        onDragOver={handleDragOver}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={() => !uploading && fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-2xl p-6 transition-all duration-200 cursor-pointer flex flex-col items-center justify-center text-center ${
-          isDragging
-            ? 'border-orange-500 bg-orange-50/80 ring-4 ring-orange-500/10 scale-[1.01]'
-            : 'border-slate-300 hover:border-orange-400 bg-slate-50/60 hover:bg-orange-50/30'
-        }`}
-      >
-        <div
-          className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
-            isDragging ? 'bg-orange-500 text-white scale-110' : 'bg-white text-orange-600 shadow-sm'
-          }`}
-        >
-          {isDragging ? <Files className="w-6 h-6 animate-pulse" /> : <UploadCloud className="w-6 h-6" />}
-        </div>
-        <div className="mt-3 space-y-1">
-          <p className="text-sm font-semibold text-slate-800">
-            {isDragging ? (
-              <span className="text-orange-600 font-bold">释放鼠标立即开始批量上传</span>
-            ) : (
-              <>
-                <span className="text-orange-600 hover:underline">点击选择文件</span> 或将文档拖拽至此处
-              </>
-            )}
-          </p>
-          <p className="text-xs text-slate-500">
-            支持同时拖拽/选择多个文件，格式支持 PDF、DOCX、Markdown、TXT、JSON、CSV
-          </p>
-        </div>
-
-        {/* Uploading progress bar */}
-        {uploading && uploadProgress && (
-          <div className="mt-4 w-full max-w-md bg-white border border-slate-200 rounded-xl p-3 shadow-xs space-y-2 text-left">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-              <span className="truncate pr-2">
-                正在上传并解析: <span className="font-mono text-orange-600">{uploadProgress.currentName}</span>
-              </span>
-              <span className="font-mono text-slate-500 flex-shrink-0">
-                {uploadProgress.completed} / {uploadProgress.total} (
-                {Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%)
-              </span>
-            </div>
-            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-orange-600 h-2 rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
+        {canUpload ? (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-2 shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            <Upload className="w-4 h-4" />
+            <span>{uploading ? '上传解析中...' : '上传文档 (可多选)'}</span>
+          </button>
+        ) : (
+          <span className="text-xs text-slate-500 flex items-center gap-1 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+            只读访问（无文档上传权限）
+          </span>
         )}
       </div>
 
+      {/* Drag & Drop Zone */}
+      {canUpload ? (
+        <div
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => !uploading && fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-2xl p-6 transition-all duration-200 cursor-pointer flex flex-col items-center justify-center text-center ${
+            isDragging
+              ? 'border-orange-500 bg-orange-50/80 ring-4 ring-orange-500/10 scale-[1.01]'
+              : 'border-slate-300 hover:border-orange-400 bg-slate-50/60 hover:bg-orange-50/30'
+          }`}
+        >
+          <div
+            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${
+              isDragging ? 'bg-orange-500 text-white scale-110' : 'bg-white text-orange-600 shadow-sm'
+            }`}
+          >
+            {isDragging ? <Files className="w-6 h-6 animate-pulse" /> : <UploadCloud className="w-6 h-6" />}
+          </div>
+          <div className="mt-3 space-y-1">
+            <p className="text-sm font-semibold text-slate-800">
+              {isDragging ? (
+                <span className="text-orange-600 font-bold">释放鼠标立即开始批量上传</span>
+              ) : (
+                <>
+                  <span className="text-orange-600 hover:underline">点击选择文件</span> 或将文档拖拽至此处
+                </>
+              )}
+            </p>
+            <p className="text-xs text-slate-500">
+              支持同时拖拽/选择多个文件，格式支持 PDF、DOCX、Markdown、TXT、JSON、CSV，上传后系统将自动解析切块并轮询刷新就绪状态
+            </p>
+          </div>
+
+          {/* Uploading progress bar */}
+          {uploading && uploadProgress && (
+            <div className="mt-4 w-full max-w-md bg-white border border-slate-200 rounded-xl p-3 shadow-xs space-y-2 text-left">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                <span className="truncate pr-2">
+                  正在上传并解析: <span className="font-mono text-orange-600">{uploadProgress.currentName}</span>
+                </span>
+                <span className="font-mono text-slate-500 flex-shrink-0">
+                  {uploadProgress.completed} / {uploadProgress.total} (
+                  {Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%)
+                </span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-orange-600 h-2 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
       {/* Document Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Table Header Controls */}
+        <div className="px-6 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <FileText className="w-4 h-4 text-slate-400" />
+            <span>文档列表 ({documents.length})</span>
+            {hasProcessingDocs && (
+              <span className="ml-2 text-xs font-medium text-amber-600 flex items-center gap-1 animate-pulse">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                正在自动刷新处理状态...
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchDocs(false)}
+            disabled={loading || isRefreshing}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs transition cursor-pointer"
+            title="手动刷新文档状态"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-orange-600' : ''}`} />
+            <span>刷新状态</span>
+          </button>
+        </div>
+
         {loading ? (
           <div className="p-8 text-center text-slate-400 text-sm">加载文档列表中...</div>
         ) : documents.length === 0 ? (
           <div className="p-12 text-center text-slate-500 space-y-2">
             <FileText className="w-10 h-10 text-slate-300 mx-auto" />
             <p className="text-sm font-semibold">该知识库尚无文档</p>
-            <p className="text-xs text-slate-400">可拖拽上方区域或点击按钮上传首个文档</p>
+            <p className="text-xs text-slate-400">
+              {canUpload ? '可拖拽上方区域或点击按钮上传首个文档' : '当前暂无文档'}
+            </p>
           </div>
         ) : (
           <table className="w-full text-left border-collapse">
@@ -388,25 +458,29 @@ export const KnowledgeBaseDetail: React.FC = () => {
                   <td className="py-3.5 px-6 text-right space-x-2">
                     <button
                       onClick={() => viewChunks(doc.id)}
-                      className="p-1 text-slate-400 hover:text-blue-600 rounded transition"
+                      className="p-1 text-slate-400 hover:text-blue-600 rounded transition cursor-pointer"
                       title="预览切块"
                     >
                       <Layers className="w-4 h-4 inline" />
                     </button>
-                    <button
-                      onClick={() => handleReindex(doc.id)}
-                      className="p-1 text-slate-400 hover:text-orange-600 rounded transition"
-                      title="重新索引"
-                    >
-                      <RefreshCw className="w-4 h-4 inline" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(doc.id)}
-                      className="p-1 text-slate-400 hover:text-red-600 rounded transition"
-                      title="删除文档"
-                    >
-                      <Trash2 className="w-4 h-4 inline" />
-                    </button>
+                    {canReindex && (
+                      <button
+                        onClick={() => handleReindex(doc.id)}
+                        className="p-1 text-slate-400 hover:text-orange-600 rounded transition cursor-pointer"
+                        title="重新索引"
+                      >
+                        <RefreshCw className="w-4 h-4 inline" />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() => handleDelete(doc.id)}
+                        className="p-1 text-slate-400 hover:text-red-600 rounded transition cursor-pointer"
+                        title="删除文档"
+                      >
+                        <Trash2 className="w-4 h-4 inline" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -426,7 +500,7 @@ export const KnowledgeBaseDetail: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedDocId(null)}
-                className="text-slate-400 hover:text-slate-600"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>

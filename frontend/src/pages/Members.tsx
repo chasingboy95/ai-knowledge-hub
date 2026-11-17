@@ -1,7 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
-import { Users, UserPlus, Trash2, Shield, Mail, CheckCircle2, AlertCircle, Copy, Key } from 'lucide-react';
+import {
+  Users,
+  UserPlus,
+  Trash2,
+  Shield,
+  Mail,
+  CheckCircle2,
+  AlertCircle,
+  Copy,
+  Key,
+  ShieldAlert,
+  Loader2,
+} from 'lucide-react';
 
 interface Member {
   id: string;
@@ -13,10 +25,19 @@ interface Member {
 }
 
 export const Members: React.FC = () => {
-  const { currentOrg, user: currentUser } = useAuth();
+  const {
+    currentOrg,
+    user: currentUser,
+    currentRole,
+    hasPermission,
+    isOwnerOrAdmin,
+  } = useAuth();
+
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   // Invite Modal State
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -26,6 +47,10 @@ export const Members: React.FC = () => {
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
+
+  const isOwner = currentRole?.toUpperCase() === 'OWNER';
+  const canManageMembers = hasPermission('member:invite') || isOwnerOrAdmin;
+  const canRemoveMembers = hasPermission('member:remove') || isOwnerOrAdmin;
 
   const loadMembers = async () => {
     if (!currentOrg) return;
@@ -44,6 +69,29 @@ export const Members: React.FC = () => {
   useEffect(() => {
     loadMembers();
   }, [currentOrg]);
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    if (!currentOrg) return;
+    setUpdatingUserId(userId);
+    setError(null);
+    setSuccessToast(null);
+    try {
+      await apiClient.patch(`/organizations/${currentOrg.id}/members/${userId}`, {
+        role: newRole,
+      });
+      setSuccessToast('成员权限与角色已成功变更');
+      setTimeout(() => setSuccessToast(null), 3000);
+      await loadMembers();
+    } catch (err: any) {
+      setError(
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        '更新成员权限角色失败'
+      );
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,9 +125,11 @@ export const Members: React.FC = () => {
 
     try {
       await apiClient.delete(`/organizations/${currentOrg.id}/members/${userId}`);
+      setSuccessToast(`已移除成员 ${email}`);
+      setTimeout(() => setSuccessToast(null), 3000);
       loadMembers();
     } catch (err: any) {
-      alert(err.response?.data?.detail || '移除成员失败');
+      setError(err.response?.data?.detail || '移除成员失败');
     }
   };
 
@@ -114,24 +164,39 @@ export const Members: React.FC = () => {
             <span className="bg-slate-100 text-slate-600 text-xs px-2.5 py-1 rounded-md font-mono">
               {currentOrg?.name || '未选定组织'}
             </span>
+            {currentRole && (
+              <span className="text-xs px-2 py-0.5 rounded font-semibold bg-orange-50 text-orange-700 border border-orange-200">
+                我的身份: {getRoleBadge(currentRole)}
+              </span>
+            )}
           </div>
           <p className="text-sm text-slate-500 mt-1">管理当前企业租户下的成员身份、角色访问控制 (RBAC) 以及邀请协作。</p>
         </div>
-        <button
-          onClick={() => {
-            setIsInviteOpen(true);
-            setInviteSuccessMsg(null);
-            setGeneratedToken(null);
-          }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg shadow-sm transition"
-        >
-          <UserPlus className="w-4 h-4" />
-          邀请新成员
-        </button>
+
+        {canManageMembers && (
+          <button
+            onClick={() => {
+              setIsInviteOpen(true);
+              setInviteSuccessMsg(null);
+              setGeneratedToken(null);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg shadow-sm transition cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4" />
+            邀请新成员
+          </button>
+        )}
       </div>
 
+      {successToast && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800 flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600" />
+          <span>{successToast}</span>
+        </div>
+      )}
+
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center gap-2">
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center gap-2 animate-in fade-in">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           <span>{error}</span>
         </div>
@@ -144,6 +209,12 @@ export const Members: React.FC = () => {
             <Users className="w-4 h-4 text-slate-500" />
             <span>成员列表 ({members.length})</span>
           </div>
+          {!canManageMembers && (
+            <span className="text-xs text-slate-500 flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+              当前账户为只读权限，不可修改成员角色
+            </span>
+          )}
         </div>
 
         {isLoading ? (
@@ -155,7 +226,7 @@ export const Members: React.FC = () => {
             <thead className="bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
               <tr>
                 <th className="px-6 py-3 text-left">成员名称 / 邮箱</th>
-                <th className="px-6 py-3 text-left">租户角色</th>
+                <th className="px-6 py-3 text-left">租户角色与权限设置</th>
                 <th className="px-6 py-3 text-left">租户安全边界</th>
                 <th className="px-6 py-3 text-right">操作</th>
               </tr>
@@ -163,7 +234,12 @@ export const Members: React.FC = () => {
             <tbody className="divide-y divide-slate-100 text-sm">
               {members.map((member) => {
                 const isSelf = member.user_id === currentUser?.id;
-                const isOwner = member.role.toUpperCase() === 'OWNER';
+                const isTargetOwner = member.role.toUpperCase() === 'OWNER';
+                // Can edit role if has permission, and not demoting self from owner, and non-owner cannot edit owner
+                const canEditThisMember =
+                  canManageMembers &&
+                  (!isTargetOwner || isOwner) &&
+                  !(isSelf && isTargetOwner);
 
                 return (
                   <tr key={member.id} className="hover:bg-slate-50/70 transition">
@@ -188,7 +264,28 @@ export const Members: React.FC = () => {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">{getRoleBadge(member.role)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {canEditThisMember ? (
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={member.role.toUpperCase()}
+                            disabled={updatingUserId === member.user_id}
+                            onChange={(e) => handleRoleChange(member.user_id, e.target.value)}
+                            className="bg-slate-50 border border-slate-300 text-slate-700 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer font-medium disabled:opacity-50"
+                          >
+                            {isOwner && <option value="OWNER">所有者 (OWNER)</option>}
+                            <option value="ADMIN">管理员 (ADMIN)</option>
+                            <option value="EDITOR">编辑者 (EDITOR)</option>
+                            <option value="VIEWER">只读访问 (VIEWER)</option>
+                          </select>
+                          {updatingUserId === member.user_id && (
+                            <Loader2 className="w-4 h-4 text-orange-600 animate-spin" />
+                          )}
+                        </div>
+                      ) : (
+                        getRoleBadge(member.role)
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500 font-mono">
                       <div className="flex items-center gap-1.5">
                         <Shield className="w-3.5 h-3.5 text-emerald-600" />
@@ -196,10 +293,10 @@ export const Members: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      {!isSelf && !isOwner && (
+                      {canRemoveMembers && !isSelf && (!isTargetOwner || isOwner) && (
                         <button
                           onClick={() => handleRemoveMember(member.user_id, member.email)}
-                          className="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition"
+                          className="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition cursor-pointer"
                           title="从组织移除"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -244,7 +341,7 @@ export const Members: React.FC = () => {
                       </span>
                       <button
                         onClick={copyTokenToClipboard}
-                        className="text-orange-600 hover:text-orange-700 flex items-center gap-1"
+                        className="text-orange-600 hover:text-orange-700 flex items-center gap-1 cursor-pointer"
                       >
                         <Copy className="w-3.5 h-3.5" />
                         {copiedToken ? '已复制' : '复制'}
@@ -254,7 +351,7 @@ export const Members: React.FC = () => {
                       {generatedToken}
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      提示：被邀请者可通过接口 <code>/api/v1/invitations/{'{token}'}/accept</code> 快速加入。
+                      提示：被邀请者登录后在左侧组织栏点击【接受邀请】粘贴此令牌，或从其待办邀请中一键加入。
                     </p>
                   </div>
                 )}
@@ -266,7 +363,7 @@ export const Members: React.FC = () => {
                     setInviteSuccessMsg(null);
                     setGeneratedToken(null);
                   }}
-                  className="w-full py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition"
+                  className="w-full py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition cursor-pointer"
                 >
                   完成
                 </button>
@@ -296,6 +393,7 @@ export const Members: React.FC = () => {
                     onChange={(e) => setInviteRole(e.target.value as any)}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
                   >
+                    {isOwner && <option value="OWNER">OWNER - 组织所有者（最高控制权）</option>}
                     <option value="ADMIN">ADMIN - 组织管理员（管理成员、文档及智能体）</option>
                     <option value="EDITOR">EDITOR - 知识库编辑者（上传与管理文档、创建会话）</option>
                     <option value="VIEWER">VIEWER - 只读访问者（检索知识库与体验问答）</option>
@@ -313,7 +411,7 @@ export const Members: React.FC = () => {
                   <button
                     type="submit"
                     disabled={inviteLoading}
-                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg shadow-sm transition disabled:opacity-50"
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg shadow-sm transition disabled:opacity-50 cursor-pointer"
                   >
                     {inviteLoading ? '发送中...' : '发送邀请'}
                   </button>

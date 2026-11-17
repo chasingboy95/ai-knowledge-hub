@@ -10,6 +10,7 @@ import { KnowledgeBaseDetail } from './pages/KnowledgeBaseDetail';
 import { Chat } from './pages/Chat';
 import { Members } from './pages/Members';
 import { AuditLogs } from './pages/AuditLogs';
+import { AcceptInvitePage } from './pages/AcceptInvitePage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, isLoading } = useAuth();
@@ -40,6 +41,8 @@ export function App() {
           {/* Public Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/invite" element={<AcceptInvitePage />} />
+          <Route path="/invite/:token" element={<AcceptInvitePage />} />
 
           {/* Protected Application Console Routes */}
           <Route

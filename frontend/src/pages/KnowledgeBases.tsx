@@ -14,7 +14,7 @@ export interface KnowledgeBase {
 }
 
 export const KnowledgeBases: React.FC = () => {
-  const { currentOrg, currentWorkspace } = useAuth();
+  const { currentOrg, currentWorkspace, hasPermission } = useAuth();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -24,6 +24,8 @@ export const KnowledgeBases: React.FC = () => {
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const canCreateKB = hasPermission('knowledge:create');
 
   const fetchKBs = async () => {
     if (!currentOrg || !currentWorkspace) {
@@ -68,30 +70,22 @@ export const KnowledgeBases: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const res = await apiClient.post<KnowledgeBase>(
+      await apiClient.post(
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases`,
         {
           name: name.trim(),
-          slug: slug.trim() || undefined,
-          description: description.trim() || undefined,
+          slug: slug.trim(),
+          description: description.trim() || null,
         }
       );
-      // Immediately display newly created knowledge base in list
-      const newKb = res.data;
-      setKbs((prev) => [newKb, ...prev.filter((k) => k.id !== newKb.id)]);
       setShowModal(false);
-      setName('');
-      setSlug('');
-      setIsSlugTouched(false);
-      setDescription('');
-      // Background sync from server
       fetchKBs();
     } catch (err: any) {
-      const msg =
+      setError(
         err.response?.data?.error?.message ||
         err.response?.data?.detail ||
-        '创建知识库失败，请检查名称或标识是否冲突';
-      setError(msg);
+        '创建知识库失败，请检查唯一标识是否重复'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -108,14 +102,16 @@ export const KnowledgeBases: React.FC = () => {
               : '管理工作区内的结构化文档集与索引空间'}
           </p>
         </div>
-        <button
-          onClick={handleOpenModal}
-          disabled={!currentWorkspace}
-          className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition flex items-center gap-2 shadow-sm disabled:opacity-40 disabled:pointer-events-none"
-        >
-          <Plus className="w-4 h-4" />
-          <span>新建知识库</span>
-        </button>
+        {canCreateKB && (
+          <button
+            onClick={handleOpenModal}
+            disabled={!currentWorkspace}
+            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition flex items-center gap-2 shadow-sm disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>新建知识库</span>
+          </button>
+        )}
       </div>
 
       {!currentWorkspace ? (
@@ -135,13 +131,15 @@ export const KnowledgeBases: React.FC = () => {
           <p className="text-xs text-slate-500 mt-1 mb-4">
             为工作区【{currentWorkspace.name}】创建第一个知识库以开始上传文档与建立向量索引
           </p>
-          <button
-            onClick={handleOpenModal}
-            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-1.5 shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新建知识库</span>
-          </button>
+          {canCreateKB && (
+            <button
+              onClick={handleOpenModal}
+              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新建知识库</span>
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -217,53 +215,54 @@ export const KnowledgeBases: React.FC = () => {
                       setSlug(generateSlug(val));
                     }
                   }}
-                  placeholder="例如：技术白皮书、产品文档"
+                  placeholder="如：技术规范与产品文档"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  唯一别名 Slug (用于路径与标识)
+                  知识库标识 (Slug)
                 </label>
                 <input
                   type="text"
+                  required
                   value={slug}
                   onChange={(e) => {
                     const val = e.target.value;
                     setSlug(val);
                     setIsSlugTouched(val.length > 0);
                   }}
-                  placeholder="如：tech-docs 或 产品文档"
+                  placeholder="如：tech-specs 或 技术文档"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 font-mono text-xs"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  描述 (可选)
+                  描述 (选填)
                 </label>
                 <textarea
-                  rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="说明此知识库所收录文档的范围与应用场景..."
+                  placeholder="简述该知识库存储的文档类型及用途"
+                  rows={3}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-medium rounded-lg transition"
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !name.trim()}
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded-lg shadow-sm transition disabled:opacity-50 flex items-center gap-1.5"
+                  disabled={isSubmitting || !name.trim() || !slug.trim()}
+                  className="px-4 py-2 text-sm font-medium bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? '创建中...' : '确认创建'}
                 </button>

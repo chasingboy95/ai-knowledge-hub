@@ -94,6 +94,82 @@ async def accept_invitation(db: AsyncSession, token: str, user: User) -> Members
     return membership
 
 
+async def accept_invitation_by_id(db: AsyncSession, invitation_id: UUID, user: User) -> Membership:
+    invitation = await db.scalar(
+        select(OrganizationInvitation).where(
+            OrganizationInvitation.id == invitation_id
+        )
+    )
+    now = utc_now()
+    if invitation is None or invitation.accepted_at is not None or invitation.expires_at <= now:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    if invitation.email != normalize_email(user.email):
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    result = await db.execute(
+        update(OrganizationInvitation)
+        .where(
+            OrganizationInvitation.id == invitation.id,
+            OrganizationInvitation.accepted_at.is_(None),
+            OrganizationInvitation.expires_at > now,
+        )
+        .values(accepted_at=now)
+    )
+    if result.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    membership = Membership(user_id=user.id, organization_id=invitation.organization_id, role_id=invitation.role_id)
+    db.add(membership)
+    invitation.accepted_at = now
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Already a member of this organization") from exc
+    await db.refresh(membership)
+    return membership
+
+
+async def update_member_role(
+    db: AsyncSession, organization_id: UUID, user_id: UUID, role_code: str, actor_id: UUID
+) -> Membership:
+    role_code = role_code.upper()
+    if role_code not in VALID_ROLES:
+        raise HTTPException(status_code=422, detail="Invalid role")
+    actor_membership = await authorize_membership(db, actor_id, organization_id, "member:invite")
+    membership = await db.scalar(
+        select(Membership)
+        .options(selectinload(Membership.role), selectinload(Membership.user))
+        .where(
+            Membership.organization_id == organization_id,
+            Membership.user_id == user_id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if role_code == "OWNER" or (membership.role and membership.role.code == "OWNER"):
+        if not actor_membership.role or actor_membership.role.code != "OWNER":
+            raise HTTPException(status_code=403, detail="Permission denied")
+
+    if membership.role and membership.role.code == "OWNER" and role_code != "OWNER":
+        owner_count = await db.scalar(
+            select(func.count())
+            .select_from(Membership)
+            .join(Role)
+            .where(Membership.organization_id == organization_id, Role.code == "OWNER")
+        )
+        if owner_count <= 1:
+            raise HTTPException(status_code=409, detail="Cannot change role of the last owner")
+
+    await seed_rbac(db)
+    target_role = await db.scalar(select(Role).where(Role.code == role_code))
+    membership.role_id = target_role.id
+    membership.role = target_role
+    await db.commit()
+    await db.refresh(membership)
+    return membership
+
+
 async def remove_member(db: AsyncSession, organization_id: UUID, user_id: UUID, actor_id: UUID) -> None:
     organization = await db.scalar(
         select(Organization).where(Organization.id == organization_id).with_for_update()

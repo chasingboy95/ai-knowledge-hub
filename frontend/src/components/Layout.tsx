@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { generateSlug } from '../utils/slug';
+import { ProfileModal } from './ProfileModal';
+import { AcceptInviteModal } from './AcceptInviteModal';
 import {
   BookOpen,
   MessageSquare,
@@ -15,6 +17,8 @@ import {
   Plus,
   X,
   AlertCircle,
+  Settings,
+  Mail,
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
@@ -24,6 +28,9 @@ export const Layout: React.FC = () => {
     currentOrg,
     workspaces,
     currentWorkspace,
+    currentRole,
+    hasPermission,
+    pendingInvitationsCount,
     switchOrganization,
     switchWorkspace,
     createOrganization,
@@ -45,6 +52,9 @@ export const Layout: React.FC = () => {
   const [isWsSlugTouched, setIsWsSlugTouched] = useState(false);
   const [wsError, setWsError] = useState<string | null>(null);
   const [isSubmittingWs, setIsSubmittingWs] = useState(false);
+
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAcceptInviteModal, setShowAcceptInviteModal] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -95,6 +105,21 @@ export const Layout: React.FC = () => {
     }
   };
 
+  const getRoleText = (role?: string | null) => {
+    switch (role?.toUpperCase()) {
+      case 'OWNER':
+        return '所有者';
+      case 'ADMIN':
+        return '管理员';
+      case 'EDITOR':
+        return '编辑者';
+      case 'VIEWER':
+        return '只读成员';
+      default:
+        return '租户成员';
+    }
+  };
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
       {/* Sidebar */}
@@ -119,20 +144,36 @@ export const Layout: React.FC = () => {
                   <Building2 className="w-3 h-3 text-slate-400" />
                   当前组织
                 </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOrgName('');
-                    setOrgSlug('');
-                    setIsOrgSlugTouched(false);
-                    setOrgError(null);
-                    setShowOrgModal(true);
-                  }}
-                  className="p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
-                  title="新建组织"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* Accept invite button with badge */}
+                  <button
+                    type="button"
+                    onClick={() => setShowAcceptInviteModal(true)}
+                    className="relative p-1 text-slate-400 hover:text-orange-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                    title="接受组织邀请 / 待办"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    {pendingInvitationsCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-orange-600 text-white font-bold text-[9px] rounded-full flex items-center justify-center animate-pulse">
+                        {pendingInvitationsCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOrgName('');
+                      setOrgSlug('');
+                      setIsOrgSlugTouched(false);
+                      setOrgError(null);
+                      setShowOrgModal(true);
+                    }}
+                    className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition cursor-pointer"
+                    title="新建组织"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
               <div className="relative">
                 <select
@@ -172,9 +213,9 @@ export const Layout: React.FC = () => {
                     setWsError(null);
                     setShowWsModal(true);
                   }}
-                  disabled={!currentOrg}
-                  className="p-0.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:pointer-events-none"
-                  title="新建工作区"
+                  disabled={!currentOrg || !hasPermission('workspace:create')}
+                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  title={hasPermission('workspace:create') ? '新建工作区' : '当前角色无工作区创建权限'}
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
@@ -204,7 +245,7 @@ export const Layout: React.FC = () => {
             </div>
           </div>
 
-          {/* Navigation Links */}
+          {/* Navigation Links - Filtered by Menu Permissions */}
           <nav className="p-3 space-y-1">
             <NavLink
               to="/"
@@ -263,60 +304,106 @@ export const Layout: React.FC = () => {
               <span>成员与权限</span>
             </NavLink>
 
-            <NavLink
-              to="/audit"
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                  isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`
-              }
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>安全审计日志</span>
-            </NavLink>
+            {/* Menu Permission: Audit Log visible only to members with audit:read (Owner & Admin) */}
+            {hasPermission('audit:read') && (
+              <NavLink
+                to="/audit"
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    isActive
+                      ? 'bg-orange-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                  }`
+                }
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>安全审计日志</span>
+              </NavLink>
+            )}
           </nav>
         </div>
 
-        {/* User Footer */}
+        {/* User Footer with Personal Settings */}
         <div className="p-4 border-t border-slate-800/80 flex items-center justify-between">
-          <div className="truncate">
-            <p className="text-xs font-semibold text-slate-200 truncate">{user?.email}</p>
-            <p className="text-[10px] text-slate-500 font-mono">租户隔离运行中</p>
+          <div className="truncate flex-1 pr-2">
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold text-slate-200 truncate">
+                {user?.full_name || user?.email}
+              </p>
+              {currentRole && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-800 text-orange-400 border border-slate-700">
+                  {getRoleText(currentRole)}
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 font-mono truncate">{user?.email}</p>
           </div>
-          <button
-            onClick={handleLogout}
-            title="退出登录"
-            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-md transition"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowProfileModal(true)}
+              title="个人信息维护与设置"
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition cursor-pointer"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleLogout}
+              title="退出登录"
+              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-md transition cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </aside>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Banner if there are pending invitations */}
+        {pendingInvitationsCount > 0 && (
+          <div className="bg-gradient-to-r from-orange-600 to-amber-600 text-white px-6 py-2.5 flex items-center justify-between text-xs font-medium shadow-sm">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4 animate-bounce" />
+              <span>您有 {pendingInvitationsCount} 个待处理的组织邀请，加入后可协同管理知识库及 Agent。</span>
+            </div>
+            <button
+              onClick={() => setShowAcceptInviteModal(true)}
+              className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-md font-semibold transition cursor-pointer"
+            >
+              查看并接受
+            </button>
+          </div>
+        )}
+
         {/* Onboarding banners if empty */}
         {organizations.length === 0 ? (
           <div className="m-6 p-6 bg-orange-50 border border-orange-200 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
             <div>
               <h3 className="font-bold text-orange-900 text-base">欢迎加入 AI Knowledge Hub！</h3>
-              <p className="text-sm text-orange-700 mt-1">您当前尚未加入或创建任何组织。请先创建一个组织以开始使用知识库管理与智能 Agent 对话。</p>
+              <p className="text-sm text-orange-700 mt-1">您当前尚未加入或创建任何组织。您可以创建一个新组织，或者接受团队发来的邀请码快速加入。</p>
             </div>
-            <button
-              onClick={() => {
-                setOrgName('');
-                setOrgSlug('');
-                setIsOrgSlugTouched(false);
-                setOrgError(null);
-                setShowOrgModal(true);
-              }}
-              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap"
-            >
-              <Plus className="w-4 h-4" />
-              创建第一个组织
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowAcceptInviteModal(true)}
+                className="px-4 py-2 bg-white border border-orange-300 hover:bg-orange-100 text-orange-800 text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs transition whitespace-nowrap cursor-pointer"
+              >
+                <Mail className="w-4 h-4" />
+                接受邀请
+              </button>
+              <button
+                onClick={() => {
+                  setOrgName('');
+                  setOrgSlug('');
+                  setIsOrgSlugTouched(false);
+                  setOrgError(null);
+                  setShowOrgModal(true);
+                }}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                创建第一个组织
+              </button>
+            </div>
           </div>
         ) : workspaces.length === 0 ? (
           <div className="m-6 p-6 bg-blue-50 border border-blue-200 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
@@ -324,24 +411,42 @@ export const Layout: React.FC = () => {
               <h3 className="font-bold text-blue-900 text-base">组织【{currentOrg?.name}】尚未创建工作区</h3>
               <p className="text-sm text-blue-700 mt-1">知识库与对话会话均按工作区隔离。请先在当前组织下创建一个工作区。</p>
             </div>
-            <button
-              onClick={() => {
-                setWsName('');
-                setWsSlug('');
-                setIsWsSlugTouched(false);
-                setWsError(null);
-                setShowWsModal(true);
-              }}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap"
-            >
-              <Plus className="w-4 h-4" />
-              创建工作区
-            </button>
+            {hasPermission('workspace:create') ? (
+              <button
+                onClick={() => {
+                  setWsName('');
+                  setWsSlug('');
+                  setIsWsSlugTouched(false);
+                  setWsError(null);
+                  setShowWsModal(true);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition whitespace-nowrap cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                创建工作区
+              </button>
+            ) : (
+              <span className="text-xs text-blue-600 bg-blue-100 px-3 py-1.5 rounded-lg">
+                您当前为{getRoleText(currentRole)}，请联系组织管理员创建工作区
+              </span>
+            )}
           </div>
         ) : null}
 
         <Outlet />
       </main>
+
+      {/* Profile Maintenance Modal */}
+      <ProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
+
+      {/* Accept Invitation Modal */}
+      <AcceptInviteModal
+        isOpen={showAcceptInviteModal}
+        onClose={() => setShowAcceptInviteModal(false)}
+      />
 
       {/* Modal: Create Organization */}
       {showOrgModal && (
@@ -485,7 +590,7 @@ export const Layout: React.FC = () => {
                   onChange={(e) => {
                     const val = e.target.value;
                     setWsSlug(val);
-                    setIsWsSlugTouched(val.length > 0);
+                    setIsOrgSlugTouched(val.length > 0);
                   }}
                   placeholder="如：customer-support 或 客服专区"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono text-xs"

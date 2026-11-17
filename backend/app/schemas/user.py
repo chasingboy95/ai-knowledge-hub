@@ -16,3 +16,12 @@ class UserRead(BaseModel):
 
 class UserUpdate(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
+
+
+class PasswordChangeRequest(BaseModel):
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+class UserPasswordChangeResponse(BaseModel):
+    message: str = "密码修改成功"

@@ -37,6 +37,17 @@ class InvitationAcceptResponse(BaseModel):
     user_id: UUID
 
 
+class PendingInvitationResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    organization_name: str
+    organization_slug: str
+    role: str
+    invited_by: str | None = None
+    created_at: datetime
+    expires_at: datetime
+
+
 class MemberResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -44,3 +55,14 @@ class MemberResponse(BaseModel):
     email: str
     full_name: str | None = None
     role: str
+
+
+class MemberRoleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["OWNER", "ADMIN", "EDITOR", "VIEWER"]
+
+
+class MyMembershipResponse(BaseModel):
+    organization_id: UUID
+    role: str
+    permissions: list[str]

@@ -4,8 +4,10 @@ import { apiClient } from '../api/client';
 export interface User {
   id: string;
   email: string;
+  full_name?: string | null;
   name?: string;
   is_active: boolean;
+  created_at?: string;
 }
 
 export interface Organization {
@@ -21,6 +23,23 @@ export interface Workspace {
   organization_id: string;
 }
 
+export interface PendingInvitation {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  organization_slug: string;
+  role: string;
+  invited_by?: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+interface MyMembershipResponse {
+  organization_id: string;
+  role: string;
+  permissions: string[];
+}
+
 interface AuthContextType {
   user: User | null;
   organizations: Organization[];
@@ -29,12 +48,21 @@ interface AuthContextType {
   currentWorkspace: Workspace | null;
   token: string | null;
   isLoading: boolean;
+  currentRole: string | null;
+  currentPermissions: string[];
+  isOwnerOrAdmin: boolean;
+  pendingInvitations: PendingInvitation[];
+  pendingInvitationsCount: number;
+  hasPermission: (permission: string) => boolean;
   login: (token: string, refreshToken?: string, user?: User | null) => void;
   logout: () => void;
   switchOrganization: (org: Organization) => void;
   switchWorkspace: (ws: Workspace) => void;
   refreshWorkspaces: (targetOrg?: Organization | null) => Promise<void>;
   refreshOrganizations: () => Promise<void>;
+  refreshMembership: () => Promise<void>;
+  refreshPendingInvitations: () => Promise<void>;
+  updateUserProfile: (fullName: string) => Promise<void>;
   createOrganization: (name: string, slug: string) => Promise<Organization>;
   createWorkspace: (name: string, slug: string) => Promise<Workspace>;
 }
@@ -48,6 +76,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const fetchProfileAndOrgs = async () => {
@@ -65,13 +96,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentOrg(null);
         setWorkspaces([]);
         setCurrentWorkspace(null);
+        setCurrentRole(null);
+        setCurrentPermissions([]);
         localStorage.removeItem('current_org_id');
         localStorage.removeItem('current_workspace_id');
       }
+
+      refreshPendingInvitations();
     } catch {
       logout();
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const refreshPendingInvitations = async () => {
+    try {
+      const res = await apiClient.get<PendingInvitation[]>('/invitations/pending');
+      setPendingInvitations(res.data);
+    } catch (err) {
+      console.warn('Failed to fetch pending invitations', err);
+    }
+  };
+
+  const refreshMembership = async () => {
+    if (!currentOrg) {
+      setCurrentRole(null);
+      setCurrentPermissions([]);
+      return;
+    }
+    try {
+      const res = await apiClient.get<MyMembershipResponse>(`/organizations/${currentOrg.id}/my-membership`);
+      setCurrentRole(res.data.role);
+      setCurrentPermissions(res.data.permissions || []);
+    } catch (err) {
+      console.warn('Failed to fetch my-membership', err);
+      setCurrentRole(null);
+      setCurrentPermissions([]);
     }
   };
 
@@ -100,6 +161,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateUserProfile = async (fullName: string) => {
+    const res = await apiClient.patch<User>('/users/me', { full_name: fullName });
+    setUser(res.data);
+  };
+
+  const hasPermission = (permission: string): boolean => {
+    if (!currentRole) return false;
+    if (currentRole.toUpperCase() === 'OWNER' || currentRole.toUpperCase() === 'ADMIN') return true;
+    return currentPermissions.includes(permission);
+  };
+
+  const isOwnerOrAdmin = currentRole?.toUpperCase() === 'OWNER' || currentRole?.toUpperCase() === 'ADMIN';
+
   useEffect(() => {
     if (token) {
       fetchProfileAndOrgs();
@@ -112,6 +186,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (currentOrg) {
       localStorage.setItem('current_org_id', currentOrg.id);
       refreshWorkspaces(currentOrg);
+      refreshMembership();
+    } else {
+      setCurrentRole(null);
+      setCurrentPermissions([]);
     }
   }, [currentOrg]);
 
@@ -146,6 +224,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentOrg(null);
     setWorkspaces([]);
     setCurrentWorkspace(null);
+    setCurrentRole(null);
+    setCurrentPermissions([]);
+    setPendingInvitations([]);
   };
 
   const switchOrganization = (org: Organization) => {
@@ -185,12 +266,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentWorkspace,
         token,
         isLoading,
+        currentRole,
+        currentPermissions,
+        isOwnerOrAdmin,
+        pendingInvitations,
+        pendingInvitationsCount: pendingInvitations.length,
+        hasPermission,
         login,
         logout,
         switchOrganization,
         switchWorkspace,
         refreshWorkspaces,
         refreshOrganizations: fetchProfileAndOrgs,
+        refreshMembership,
+        refreshPendingInvitations,
+        updateUserProfile,
         createOrganization,
         createWorkspace,
       }}

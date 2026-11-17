@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -19,6 +20,11 @@ async def get_organization_audit_logs(
     organization_id: UUID,
     workspace_id: UUID | None = Query(default=None),
     event_type: str | None = Query(default=None),
+    resource_type: str | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
+    query: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     _: Membership = Depends(require_permission("audit:read")),
@@ -29,6 +35,11 @@ async def get_organization_audit_logs(
         organization_id=organization_id,
         workspace_id=workspace_id,
         event_type=event_type,
+        resource_type=resource_type,
+        user_id=user_id,
+        start_time=start_time,
+        end_time=end_time,
+        query=query,
         limit=limit,
         offset=offset,
     )
