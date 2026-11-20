@@ -7,3 +7,78 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
 }
+
+@layer base {
+  body {
+    background: #f4f3ed;
+    color: #24322c;
+    font-family: "Atkinson Hyperlegible Next", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  button, input, textarea, select { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 2px solid #b87c52; outline-offset: 3px; }
+}
+
+.app-shell { background: #f4f3ed; color: #24322c; }
+.workspace-sidebar { background: #1c3028; color: #d9e4d9; border-color: #34483d; }
+.workspace-sidebar > div > div:first-child { border-color: #3d5044; padding: 25px 20px; }
+.workspace-sidebar > div > div:first-child > div:first-child { background: #c8dcb2; color: #21372b; box-shadow: none; border-radius: 12px; }
+.brand-title { color: #f5f5ed; font-size: 15px; font-weight: 700; letter-spacing: -.025em; }
+.brand-subtitle { display: block; color: #a5b8a7; font-size: 11px; margin-top: 5px; letter-spacing: .08em; }
+.workspace-sidebar label { color: #aebfb0; font-family: inherit; letter-spacing: .04em; }
+.workspace-sidebar select { background-color: #293f33; color: #f1f4e9; border-color: #496052; padding: 9px 30px 9px 10px; }
+.workspace-sidebar select + svg { color: #b8c9b8; top: 11px; }
+.workspace-sidebar button { color: #c1d0bf; }
+.workspace-sidebar button:hover { background-color: #344c3c; color: #fff; }
+.workspace-sidebar > div > div:nth-child(2), .workspace-sidebar > div:last-child, .chat-history { border-color: #3b4e41; }
+.workspace-nav { padding-top: 18px; padding-bottom: 18px; }
+.workspace-nav a { color: #bbcbbd; min-height: 42px; border-radius: 10px; font-weight: 500; }
+.workspace-nav a:hover { background: #30483a; color: #fff; }
+.workspace-nav a[aria-current="page"] { background: #d8e7ce; color: #1d3828; box-shadow: none; font-weight: 700; }
+.workspace-sidebar > div:last-child p { color: #e4ede2; }
+.chat-history > button:first-child { background: #d8e7ce; color: #1e3928; border: 0; min-height: 43px; }
+.chat-history > button:first-child:hover { background: #ecf3e4; color: #1e3928; }
+.chat-history > button:nth-child(2), .chat-history p { color: #b2c4b3; }
+.chat-history div > div { color: #dce8da; }
+.chat-history div > div:hover { background: #30483a; }
+.chat-history [aria-current="true"] { color: #1e3928; }
+.workspace-main { background: #f4f3ed; }
+.chat-workspace, .chat-main { background: #faf9f5; }
+.chat-main > header { background: #faf9f5; border-color: #e1e5db; min-height: 72px; }
+.chat-main > header h1 { color: #263b2e; font-size: 15px; }
+.chat-welcome { padding-top: clamp(3rem, 10vh, 8rem); }
+.chat-welcome > span { background: #dfead8; color: #355c41; border-radius: 15px; }
+.chat-welcome h2 { color: #243d2e; font-family: "Noto Serif SC", "Songti SC", serif; font-size: clamp(2rem, 3.4vw, 3.5rem); line-height: 1.2; font-weight: 600; letter-spacing: -.035em; }
+.chat-welcome p { color: #778579; font-size: 14px; margin-top: 18px; }
+.chat-composer { background: #fff; border-color: #d8dfd4; box-shadow: 0 10px 32px rgba(32, 55, 39, .08); padding: 16px; }
+.chat-composer:focus-within { border-color: #729475; box-shadow: 0 0 0 3px #e3eddf, 0 10px 32px rgba(32,55,39,.08); }
+.chat-composer textarea { color: #263b2e; font-size: 15px; }
+.chat-composer textarea::placeholder { color: #96a096; }
+.chat-composer button[type="submit"] { background: #315b40; color: white; }
+.chat-composer button[type="submit"]:disabled { background: #e5eae2; color: #829182; }
+.chat-resources { background: #eef1e9; border-color: #dfe6da; }
+.chat-resources > div:first-child { border-color: #dbe3d6; }
+.chat-resources article, .chat-resources a, .chat-resources section button { border-color: #dfe6da; }
+.content-page h1, .content-page > div:first-child h2 { color: #263d2f; letter-spacing: -.035em; }
+.content-page > header h1, .knowledge-page > div:first-child h2 { font-family: "Noto Serif SC", "Songti SC", serif; font-size: clamp(2rem, 3vw, 2.75rem); font-weight: 600; }
+.overview-page > section, .knowledge-page article > a { border-color: #e1e5dc; box-shadow: 0 7px 24px rgba(32,55,39,.04); border-radius: 16px; }
+@media (max-width: 767px) {
+  .workspace-main > div:first-child { background: #faf9f5; border-color: #dfe6da; color: #243d2e; }
+  .knowledge-page { padding: 24px 16px; }
+}
+/* Shared action and selection colors across workspace pages. */
+.content-page .bg-orange-600 { background-color: #315b40; }
+.content-page .hover\:bg-orange-700:hover { background-color: #244c32; }
+.content-page .text-orange-600, .content-page .text-orange-700 { color: #44694b; }
+.content-page .bg-orange-50 { background-color: #edf3e9; }
+.content-page .hover\:border-orange-200:hover { border-color: #b8cdb3; }
+.content-page .group:hover .group-hover\:text-orange-600 { color: #315b40; }
+.workspace-sidebar > div:last-child > div:first-child {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  border-radius: 0;
+}

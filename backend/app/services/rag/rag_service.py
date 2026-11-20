@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.core.config import Settings
 from backend.app.models.chat import ChatMessage, ChatSession, MessageRole
@@ -50,12 +51,21 @@ class RAGService:
         offset: int = 0,
         limit: int = 20,
     ) -> list[ChatSession]:
-        stmt = select(ChatSession).where(ChatSession.workspace_id == workspace_id)
+        stmt = (
+            select(ChatSession)
+            .options(selectinload(ChatSession.user))
+            .where(ChatSession.workspace_id == workspace_id)
+        )
         if user_id is not None:
             stmt = stmt.where(ChatSession.user_id == user_id)
         stmt = stmt.order_by(desc(ChatSession.updated_at)).offset(offset).limit(limit)
         res = await db.execute(stmt)
-        return list(res.scalars().all())
+        sessions = list(res.scalars().all())
+        for s in sessions:
+            if s.user:
+                s.user_email = s.user.email
+                s.user_full_name = s.user.full_name
+        return sessions
 
     async def get_session(
         self,
@@ -63,13 +73,20 @@ class RAGService:
         workspace_id: UUID,
         session_id: UUID,
     ) -> ChatSession:
-        stmt = select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.workspace_id == workspace_id,
+        stmt = (
+            select(ChatSession)
+            .options(selectinload(ChatSession.user))
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.workspace_id == workspace_id,
+            )
         )
         session = await db.scalar(stmt)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
+        if session.user:
+            session.user_email = session.user.email
+            session.user_full_name = session.user.full_name
         return session
 
     async def delete_session(

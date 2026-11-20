@@ -20,6 +20,8 @@ def get_llm_provider(settings: Settings | None = None) -> BaseLLMProvider:
             base_url=base_url,
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
+            frequency_penalty=settings.llm_frequency_penalty,
+            presence_penalty=settings.llm_presence_penalty,
         )
     return MockLLMProvider()
 

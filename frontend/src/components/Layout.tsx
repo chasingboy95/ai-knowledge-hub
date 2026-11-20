@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Sparkles,
   ShieldCheck,
+  FileSearch,
   Plus,
   X,
   AlertCircle,
@@ -127,13 +128,13 @@ export const Layout: React.FC = () => {
   };
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-white font-sans text-neutral-900">
+    <div className="app-shell flex h-dvh overflow-hidden">
       {navigationOpen && (
         <button type="button" aria-label="关闭导航" onClick={() => setNavigationOpen(false)}
           className="fixed inset-0 z-30 bg-black/25 md:hidden" />
       )}
       {/* Sidebar */}
-      <aside id="workspace-navigation" className={`inset-y-0 left-0 z-40 w-60 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white md:static md:flex ${navigationOpen ? 'fixed flex' : 'hidden'}`}>
+      <aside id="workspace-navigation" className={`workspace-sidebar inset-y-0 left-0 z-40 w-60 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white md:static md:flex ${navigationOpen ? 'fixed flex' : 'hidden'}`}>
         <div className="min-h-0 overflow-y-auto">
           {/* Logo & Brand */}
           <div className="p-5 border-b border-neutral-200 flex items-center gap-3">
@@ -141,7 +142,8 @@ export const Layout: React.FC = () => {
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="font-bold text-neutral-950 text-base tracking-tight leading-none">Knowledge Hub</h1>
+              <h1 className="brand-title">Knowledge Hub</h1>
+              <span className="brand-subtitle">工作空间</span>
             </div>
           </div>
 
@@ -258,7 +260,7 @@ export const Layout: React.FC = () => {
           </div>
 
           {/* Navigation Links - Filtered by Menu Permissions */}
-          <nav className="p-3 space-y-1">
+          <nav aria-label="主导航" className="workspace-nav p-3 space-y-1">
             <NavLink
               to="/chat"
               onClick={() => setNavigationOpen(false)}
@@ -319,6 +321,24 @@ export const Layout: React.FC = () => {
               <span>成员与权限</span>
             </NavLink>
 
+            {/* Menu Permission: Session Review & Audit Log visible only to members with audit:read (Owner & Admin) */}
+            {hasPermission('audit:read') && (
+              <NavLink
+                to="/session-review"
+                onClick={() => setNavigationOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    isActive
+                      ? 'bg-indigo-50 text-indigo-800'
+                      : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
+                  }`
+                }
+              >
+                <FileSearch className="w-4 h-4" />
+                <span>会话合规审计</span>
+              </NavLink>
+            )}
+
             {/* Menu Permission: Audit Log visible only to members with audit:read (Owner & Admin) */}
             {hasPermission('audit:read') && (
               <NavLink
@@ -375,7 +395,7 @@ export const Layout: React.FC = () => {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="workspace-main flex min-w-0 flex-1 flex-col overflow-y-auto">
         <div className="flex shrink-0 items-center gap-3 border-b border-neutral-200 px-4 py-2 md:hidden">
           <button type="button" aria-label="打开导航" aria-controls="workspace-navigation" aria-expanded={navigationOpen}
             onClick={() => setNavigationOpen(true)} className="rounded-lg p-2 hover:bg-neutral-100">

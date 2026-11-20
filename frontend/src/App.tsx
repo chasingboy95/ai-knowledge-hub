@@ -12,6 +12,7 @@ const KnowledgeBaseDetail = React.lazy(() => import('./pages/KnowledgeBaseDetail
 const Chat = React.lazy(() => import('./pages/Chat').then(({ Chat }) => ({ default: Chat })));
 const Members = React.lazy(() => import('./pages/Members').then(({ Members }) => ({ default: Members })));
 const AuditLogs = React.lazy(() => import('./pages/AuditLogs').then(({ AuditLogs }) => ({ default: AuditLogs })));
+const SessionReview = React.lazy(() => import('./pages/SessionReview').then(({ SessionReview }) => ({ default: SessionReview })));
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, isLoading, initializationFailed, retryInitialization, logout } = useAuth();
@@ -74,6 +75,7 @@ export function App() {
             <Route path="chat" element={<Chat />} />
             <Route path="members" element={<Members />} />
             <Route path="audit" element={<AuditLogs />} />
+            <Route path="session-review" element={<SessionReview />} />
           </Route>
 
           {/* Catch-all */}

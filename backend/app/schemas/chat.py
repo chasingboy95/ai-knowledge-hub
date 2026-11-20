@@ -3,7 +3,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.models.chat import MessageRole
+
+class ChatMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1)
+    knowledge_base_ids: list[UUID] | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+    min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
+    enable_agent: bool = Field(default=False)
+    model: str | None = Field(default=None, max_length=128)
 
 
 class ChatSessionCreate(BaseModel):
@@ -18,6 +25,8 @@ class ChatSessionResponse(BaseModel):
     id: UUID
     workspace_id: UUID
     user_id: UUID | None
+    user_email: str | None = None
+    user_full_name: str | None = None
     title: str
     created_at: datetime
     updated_at: datetime
@@ -34,15 +43,6 @@ class CitationSource(BaseModel):
     text_snippet: str
 
 
-class ChatMessageCreate(BaseModel):
-    content: str = Field(..., min_length=1)
-    knowledge_base_ids: list[UUID] | None = None
-    top_k: int = Field(default=5, ge=1, le=20)
-    min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
-    enable_agent: bool = Field(default=False, description="是否启用 Agent 自主工具调用模式")
-    model: str | None = Field(default=None, description="指定调用的具体模型名称，如 qwen2.5:1.5b 或 gpt-4o")
-
-
 class ChatMessageResponse(BaseModel):
     id: UUID
     session_id: UUID
@@ -56,5 +56,5 @@ class ChatMessageResponse(BaseModel):
 
 
 class ChatStreamChunk(BaseModel):
-    event: str  # "context" | "tool_call" | "tool_result" | "token" | "message" | "error" | "done"
-    data: dict | str
+    event: str
+    data: str | dict

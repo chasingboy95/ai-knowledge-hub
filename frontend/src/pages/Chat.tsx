@@ -60,7 +60,7 @@ export const Chat: React.FC = () => {
 };
 
 function ChatWorkspace() {
-  const { user, currentOrg, currentWorkspace, isOwnerOrAdmin } = useAuth();
+  const { user, currentOrg, currentWorkspace } = useAuth();
   const { chatNavigation, closeNavigation } = useOutletContext<{
     chatNavigation: HTMLDivElement | null;
     closeNavigation: () => void;
@@ -74,11 +74,7 @@ function ChatWorkspace() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const currentSession = sessions.find((session) => session.id === currentSessionId);
   const isOwnSession = (session?: ChatSession) => !!user && session?.user_id === user.id;
-  const isReviewSession = currentSessionId !== null && !isOwnSession(currentSession);
-  const historyGroups = isOwnerOrAdmin ? [
-    { label: '我的会话', sessions: sessions.filter(isOwnSession) },
-    { label: '审查会话', sessions: sessions.filter((session) => !isOwnSession(session)) },
-  ] : [{ label: '我的会话', sessions }];
+  const mySessions = sessions.filter(isOwnSession);
   const [historyStatus, setHistoryStatus] = useState<'loading' | 'more' | 'complete' | 'error'>(
     workspacePath ? 'loading' : 'complete',
   );
@@ -152,7 +148,7 @@ function ChatWorkspace() {
     const controller = new AbortController();
     historyRequestRef.current = controller;
     apiClient.get<ChatSession[]>(`${workspacePath}/chat/sessions`, {
-      params: { offset: sessions.length, limit: SESSION_PAGE_SIZE + 1 },
+      params: { scope: 'mine', offset: sessions.length, limit: SESSION_PAGE_SIZE + 1 },
       signal: controller.signal,
     })
       .then(({ data }) => {
@@ -293,7 +289,7 @@ function ChatWorkspace() {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const userText = inputContent.trim();
-    if (isReviewSession || !userText || customModelMissing || requestRef.current || historyMutationRef.current || loadingMessages || sessionError || !workspacePath) return;
+    if (!userText || customModelMissing || requestRef.current || historyMutationRef.current || loadingMessages || sessionError || !workspacePath) return;
 
     setSendError('');
     const controller = new AbortController();
@@ -488,9 +484,9 @@ function ChatWorkspace() {
   };
 
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
+    <div className="chat-workspace relative flex min-h-0 flex-1 overflow-hidden">
       {chatNavigation && createPortal(
-        <section className="space-y-2 border-t border-neutral-200 p-3">
+        <section className="chat-history space-y-2 border-t border-neutral-200 p-3">
           <button type="button" disabled={isStreaming || deletingSession || !workspacePath} onClick={() => {
             selectSession(null);
             closeNavigation();
@@ -508,25 +504,18 @@ function ChatWorkspace() {
             <div className="space-y-1">
               {historyStatus === 'complete' && sessions.length === 0 &&
                 <p className="px-3 py-2 text-xs text-neutral-600">暂无会话</p>}
-              {historyGroups.filter((group) => group.sessions.length > 0).map(({ label, sessions: groupSessions }) => (
-                <div key={label} role="group" aria-label={label} className="space-y-1">
-                  {isOwnerOrAdmin && <p className="px-3 pt-2 text-xs font-medium text-neutral-600">{label}</p>}
-                  {groupSessions.map((session) => (
-                    <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
-                      <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming || deletingSession} onClick={() => {
-                        selectSession(session.id);
-                        closeNavigation();
-                      }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
-                        {session.title}
-                      </button>
-                      {isOwnSession(session) && (
-                        <button type="button" disabled={isStreaming || deletingSession} onClick={() => handleDeleteSession(session)} title="删除会话"
-                          className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+              {mySessions.map((session) => (
+                <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
+                  <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming || deletingSession} onClick={() => {
+                    selectSession(session.id);
+                    closeNavigation();
+                  }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
+                    {session.title}
+                  </button>
+                  <button type="button" disabled={isStreaming || deletingSession} onClick={() => handleDeleteSession(session)} title="删除会话"
+                    className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
+                    <Trash2 className="size-3.5" />
+                  </button>
                 </div>
               ))}
               {historyStatus === 'loading' && (
@@ -549,22 +538,18 @@ function ChatWorkspace() {
         chatNavigation,
       )}
 
-      <section aria-label={isReviewSession ? '会话审查' : 'AI 问答'} className="flex min-w-0 flex-1 flex-col">
+      <section aria-label="AI 问答" className="chat-main flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-15 shrink-0 items-center justify-between gap-2 border-b border-neutral-200 px-4 sm:px-6">
           <div className="min-w-0">
             <h1 className="truncate text-sm font-semibold">{currentSession?.title || '新建对话'}</h1>
             {currentWorkspace && <p className="truncate text-xs text-neutral-600">{currentWorkspace.name}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {!isReviewSession && (
-              <>
-                {enableAgent && <span className="hidden text-xs font-medium text-indigo-700 sm:inline">Agent</span>}
-                <button type="button" aria-expanded={showConfig} aria-label="检索与模型参数"
-                  onClick={() => setShowConfig(!showConfig)} className="rounded-lg border border-neutral-200 p-2 text-neutral-700 hover:bg-neutral-100">
-                  <Sliders className="size-4" />
-                </button>
-              </>
-            )}
+            {enableAgent && <span className="hidden text-xs font-medium text-indigo-700 sm:inline">Agent</span>}
+            <button type="button" aria-expanded={showConfig} aria-label="检索与模型参数"
+              onClick={() => setShowConfig(!showConfig)} className="rounded-lg border border-neutral-200 p-2 text-neutral-700 hover:bg-neutral-100">
+              <Sliders className="size-4" />
+            </button>
             <button type="button" aria-expanded={resourcesOpen} aria-controls="chat-resources"
               onClick={() => setResourcesOpen(!resourcesOpen)}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-2 text-xs font-medium hover:bg-neutral-100 lg:hidden">
@@ -577,7 +562,7 @@ function ChatWorkspace() {
         </span>
 
         {/* Config Dropdown Drawer */}
-        {showConfig && !isReviewSession && (
+        {showConfig && (
           <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-neutral-200 bg-neutral-50 px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
             <div className="space-y-3">
               <div>
@@ -688,12 +673,10 @@ function ChatWorkspace() {
                 </button>
               )}
             </div>
-          ) : messages.length === 0 && isReviewSession ? (
-            <p className="text-sm text-neutral-600">这段会话暂无消息。</p>
           ) : messages.length === 0 ? (
-            <div className="pt-8 sm:pt-16">
+            <div className="chat-welcome pt-8 sm:pt-16">
               <span className="mb-5 inline-flex rounded-2xl bg-indigo-50 p-3 text-indigo-700"><Sparkles className="size-6" /></span>
-              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">今天想了解什么？</h2>
+              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">从一个问题开始。</h2>
               <p className="mt-3 max-w-md text-sm leading-relaxed text-neutral-600">
                 {workspacePath ? '向工作区的知识库提问，查看相关文档和引用片段。' : '选择一个工作区后，即可开始提问。'}
               </p>
@@ -817,21 +800,11 @@ function ChatWorkspace() {
               <ArrowDown className="size-3.5" aria-hidden="true" /> 跳到最新消息
             </button>
           )}
-          {isReviewSession ? (
-            <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-              <span className="font-medium">只读审查</span>
-              <button type="button" onClick={() => selectSession(null)}
-                className="rounded-lg px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-100">
-                返回个人问答
-              </button>
-            </div>
-          ) : (
-            <>
-              {customModelMissing && !showConfig && (
-                <p role="status" className="mx-auto mb-2 max-w-3xl text-sm text-neutral-600">请在检索与模型参数中填写模型名称。</p>
-              )}
-              {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
-              <form onSubmit={handleSendMessage} className="mx-auto max-w-3xl rounded-2xl border border-neutral-300 bg-white p-3 shadow-xs focus-within:border-indigo-400">
+          {customModelMissing && !showConfig && (
+            <p role="status" className="mx-auto mb-2 max-w-3xl text-sm text-neutral-600">请在检索与模型参数中填写模型名称。</p>
+          )}
+          {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
+          <form onSubmit={handleSendMessage} className="chat-composer mx-auto max-w-3xl rounded-2xl border p-3">
                 <textarea
                   aria-label="输入问题"
                   ref={inputRef}
@@ -845,7 +818,7 @@ function ChatWorkspace() {
                     }
                   }}
                   placeholder="向知识库提问…"
-                  className="block w-full resize-none px-1 py-1.5 text-sm leading-relaxed outline-none"
+                  className="block w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed outline-none"
                 />
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <details className="relative min-w-0">
@@ -885,8 +858,6 @@ function ChatWorkspace() {
                   )}
                 </div>
               </form>
-            </>
-          )}
         </div>
       </section>
       <ChatResources
@@ -898,7 +869,7 @@ function ChatWorkspace() {
         knowledgeBases={knowledgeBases}
         onClose={() => setResourcesOpen(false)}
         onTabChange={setShowSources}
-        onExample={isReviewSession ? undefined : (question) => {
+        onExample={(question) => {
           setInputContent(question);
           setResourcesOpen(false);
           inputRef.current?.focus();

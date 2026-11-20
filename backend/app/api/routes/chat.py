@@ -127,6 +127,8 @@ async def create_chat_session(
 async def list_chat_sessions(
     organization_id: UUID,
     workspace_id: UUID,
+    scope: str | None = Query(default=None),
+    user_id: UUID | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     membership: Membership = Depends(require_chat_workspace),
@@ -134,7 +136,12 @@ async def list_chat_sessions(
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
 ):
-    filter_user_id = None if can_review_sessions(membership) else current_user.id
+    if not can_review_sessions(membership) or scope == "mine":
+        filter_user_id = current_user.id
+    elif user_id:
+        filter_user_id = user_id
+    else:
+        filter_user_id = None
     return await rag_service.list_sessions(
         db=db,
         workspace_id=workspace_id,

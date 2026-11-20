@@ -13,14 +13,18 @@ class OpenAILLMProvider(BaseLLMProvider):
         api_key: str | None,
         model: str = "gpt-4o-mini",
         base_url: str = "https://api.openai.com/v1",
-        temperature: float = 0.2,
+        temperature: float = 0.4,
         max_tokens: int = 2048,
+        frequency_penalty: float = 0.5,
+        presence_penalty: float = 0.3,
     ):
         self.api_key = api_key or ""
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
 
     async def generate(
         self,
@@ -38,6 +42,8 @@ class OpenAILLMProvider(BaseLLMProvider):
             "messages": messages,
             "temperature": kwargs.get("temperature", self.temperature),
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "frequency_penalty": kwargs.get("frequency_penalty", self.frequency_penalty),
+            "presence_penalty": kwargs.get("presence_penalty", self.presence_penalty),
             "stream": False,
         }
         if tools:
@@ -88,6 +94,8 @@ class OpenAILLMProvider(BaseLLMProvider):
             "messages": messages,
             "temperature": kwargs.get("temperature", self.temperature),
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "frequency_penalty": kwargs.get("frequency_penalty", self.frequency_penalty),
+            "presence_penalty": kwargs.get("presence_penalty", self.presence_penalty),
             "stream": True,
         }
         if tools:

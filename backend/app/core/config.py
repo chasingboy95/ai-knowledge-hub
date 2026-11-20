@@ -32,8 +32,10 @@ class Settings(BaseSettings):
     llm_provider: str = "mock"  # "mock" | "openai"
     llm_base_url: str | None = None
     llm_model: str = "gpt-4o-mini"
-    llm_temperature: float = 0.2
+    llm_temperature: float = 0.4
     llm_max_tokens: int = 2048
+    llm_frequency_penalty: float = 0.5
+    llm_presence_penalty: float = 0.3
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

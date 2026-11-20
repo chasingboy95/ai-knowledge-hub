@@ -33,7 +33,7 @@ export function ChatResources({
     <aside
       id="chat-resources"
       aria-label="问答资料"
-      className={`absolute inset-y-0 right-0 z-20 w-full max-w-sm flex-col border-l border-neutral-200 bg-neutral-50 lg:static lg:z-auto lg:flex lg:w-[35%] lg:min-w-70 lg:max-w-100 ${open ? 'flex shadow-xl lg:shadow-none' : 'hidden'}`}
+      className={`chat-resources absolute inset-y-0 right-0 z-20 w-full max-w-sm flex-col border-l border-neutral-200 bg-neutral-50 lg:static lg:z-auto lg:flex lg:w-[35%] lg:min-w-70 lg:max-w-100 ${open ? 'flex shadow-xl lg:shadow-none' : 'hidden'}`}
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3">
         <div className="flex gap-1 rounded-xl bg-neutral-200/60 p-1">

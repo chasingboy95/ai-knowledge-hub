@@ -16,7 +16,7 @@ export const Dashboard: React.FC = () => {
   const canRead = hasPermission('knowledge:read');
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-8 sm:py-8">
+    <div className="content-page overview-page mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-8 sm:py-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">工作台概览</h1>
