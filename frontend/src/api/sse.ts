@@ -1,3 +1,5 @@
+import { readAuthSession, renewAuthSession } from './authSession.ts';
+
 export interface SSEEvent {
   event: string;
   data: any;
@@ -34,22 +36,34 @@ export async function fetchSSE(
     signal?: AbortSignal;
   }
 ) {
-  const token = localStorage.getItem('access_token');
+  const session = readAuthSession();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
   };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (session.accessToken) headers.Authorization = `Bearer ${session.accessToken}`;
 
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
     options.signal?.throwIfAborted();
-    const response = await fetch(url, {
+    const request = {
       method: 'POST',
       headers,
       body: JSON.stringify(options.body || {}),
       signal: options.signal,
-    });
+    };
+    let response = await fetch(url, request);
+    if (response.status === 401 && session.accessToken) {
+      void response.body?.cancel().catch(() => {});
+      options.signal?.throwIfAborted();
+      const renewed = await renewAuthSession(session);
+      options.signal?.throwIfAborted();
+      const current = readAuthSession();
+      if (renewed && current.accessToken && current.generation === renewed.generation) {
+        headers.Authorization = `Bearer ${current.accessToken}`;
+        response = await fetch(url, request);
+      }
+    }
 
     if (!response.ok) {
       if (response.status === 401) throw new Error('登录已过期，请重新登录后再试。');

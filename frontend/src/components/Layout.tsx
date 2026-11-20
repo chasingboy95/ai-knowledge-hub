@@ -467,10 +467,12 @@ export const Layout: React.FC = () => {
         ) : null}
 
         {workspaceStatus !== 'loading' && (
-          <Outlet
-            key={`${currentOrg?.id ?? ''}/${currentWorkspace?.id ?? ''}`}
-            context={{ chatNavigation, closeNavigation: () => setNavigationOpen(false) }}
-          />
+          <React.Suspense fallback={<p role="status" className="m-6 text-sm text-neutral-600">正在加载页面…</p>}>
+            <Outlet
+              key={`${currentOrg?.id ?? ''}/${currentWorkspace?.id ?? ''}`}
+              context={{ chatNavigation, closeNavigation: () => setNavigationOpen(false) }}
+            />
+          </React.Suspense>
         )}
       </main>
 

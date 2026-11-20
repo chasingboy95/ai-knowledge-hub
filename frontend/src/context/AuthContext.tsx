@@ -50,6 +50,8 @@ interface AuthContextType {
   currentWorkspace: Workspace | null;
   token: string | null;
   isLoading: boolean;
+  initializationFailed: boolean;
+  retryInitialization: () => void;
   currentRole: string | null;
   currentPermissions: string[];
   isOwnerOrAdmin: boolean;
@@ -94,6 +96,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     : workspaceError ? 'error' : workspaceList === null ? 'loading' : 'ready';
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(!!token);
+  const [initializationFailed, setInitializationFailed] = useState(false);
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
 
   const resetOrganizationContext = useCallback(() => {
     contextRequest.current?.abort();
@@ -128,6 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setOrganizations([]);
     setPendingInvitations([]);
+    setInitializationFailed(false);
     setIsLoading(false);
   }, [selectOrganization]);
 
@@ -157,12 +162,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       selectOrganization(orgs.find((org) => org.id === savedOrgId) ?? orgs[0] ?? null);
       if (!orgs.length) localStorage.removeItem('current_workspace_id');
       void refreshPendingInvitations();
-    } catch {
-      if (isCurrent()) logout();
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (!localStorage.getItem('access_token')) {
+        logout();
+      } else if (signal) {
+        setInitializationFailed(true);
+      } else {
+        throw error;
+      }
     } finally {
       if (isCurrent()) setIsLoading(false);
     }
   }, [logout, refreshPendingInvitations, selectOrganization]);
+
+  const retryInitialization = () => {
+    setInitializationFailed(false);
+    setIsLoading(true);
+    setInitializationAttempt((attempt) => attempt + 1);
+  };
 
   const reloadOrganizationContext = () => {
     resetOrganizationContext();
@@ -187,7 +205,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const controller = new AbortController();
     void fetchProfileAndOrgs(controller.signal);
     return () => controller.abort();
-  }, [token, fetchProfileAndOrgs]);
+  }, [token, fetchProfileAndOrgs, initializationAttempt]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -240,6 +258,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = (newToken: string, refreshToken?: string, newUser?: User | null) => {
     if (newToken !== token) {
       accountVersion.current++;
+      setInitializationFailed(false);
       setIsLoading(true);
     }
     localStorage.setItem('access_token', newToken);
@@ -287,6 +306,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentWorkspace,
         token,
         isLoading,
+        initializationFailed,
+        retryInitialization,
         currentRole,
         currentPermissions,
         isOwnerOrAdmin,

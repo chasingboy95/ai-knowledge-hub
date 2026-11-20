@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutletContext } from 'react-router-dom';
 import { ChatResources, type ChatKnowledgeBase } from '../components/ChatResources';
@@ -22,6 +22,7 @@ import {
   Cpu,
   PanelRight,
   ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 
 interface ChatSession {
@@ -32,6 +33,8 @@ interface ChatSession {
   created_at: string;
   updated_at: string;
 }
+
+const SESSION_PAGE_SIZE = 20;
 
 interface ToolCallState {
   id?: string;
@@ -69,7 +72,13 @@ function ChatWorkspace() {
   // Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [loadingSessions, setLoadingSessions] = useState(!!workspacePath);
+  const [historyStatus, setHistoryStatus] = useState<'loading' | 'more' | 'complete' | 'error'>(
+    workspacePath ? 'loading' : 'complete',
+  );
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const historyRequestRef = useRef<AbortController | null>(null);
+  const historyMutationRef = useRef<AbortController | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
 
   // Messages
   const [messages, setMessages] = useState<Message[]>([]);
@@ -79,14 +88,18 @@ function ChatWorkspace() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [sessionError, setSessionError] = useState('');
+  const [sessionError, setSessionError] = useState<'forbidden' | 'unavailable' | null>(null);
+  const [messageRequestVersion, setMessageRequestVersion] = useState(0);
   const [sendError, setSendError] = useState('');
 
   // Config & Knowledge bases
   const [knowledgeBases, setKnowledgeBases] = useState<ChatKnowledgeBase[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [enableAgent, setEnableAgent] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [modelOption, setModelOption] = useState('');
+  const [customModel, setCustomModel] = useState('');
+  const model = modelOption === 'custom' ? customModel.trim() : modelOption;
+  const customModelMissing = modelOption === 'custom' && !model;
   const [topK, setTopK] = useState(5);
   const [minSimilarity, setMinSimilarity] = useState(0.3);
   const [showConfig, setShowConfig] = useState(false);
@@ -98,10 +111,26 @@ function ChatWorkspace() {
   const answer = answerIndex === null ? undefined : messages[answerIndex];
   const sources = answer ? getChatSources(answer.content, answer.context_citations) : [];
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'nearest' });
+  const jumpToLatest = () => {
+    followLatest.current = true;
+    setShowJumpToLatest(false);
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  };
+
+  const trackReadingPosition = (transcript: HTMLDivElement) => {
+    const atBottom = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop < 64;
+    followLatest.current = atBottom;
+    setShowJumpToLatest(!atBottom);
+  };
+
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (followLatest.current && transcript) transcript.scrollTop = transcript.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -112,22 +141,37 @@ function ChatWorkspace() {
   }, [showSources, resourcesOpen, answerIndex, activeCitation]);
 
   useEffect(() => {
-    if (!workspacePath) return;
+    if (!workspacePath || historyStatus !== 'loading' || historyMutationRef.current) return;
     const controller = new AbortController();
-    apiClient.get<ChatSession[]>(`${workspacePath}/chat/sessions`, { signal: controller.signal })
+    historyRequestRef.current = controller;
+    apiClient.get<ChatSession[]>(`${workspacePath}/chat/sessions`, {
+      params: { offset: sessions.length, limit: SESSION_PAGE_SIZE + 1 },
+      signal: controller.signal,
+    })
       .then(({ data }) => {
         if (controller.signal.aborted) return;
+        const page = data.slice(0, SESSION_PAGE_SIZE);
         setSessions((prev) => {
-          const loadedIds = new Set(data.map((session) => session.id));
-          return [...prev.filter((session) => !loadedIds.has(session.id)), ...data];
+          const loadedIds = new Set(prev.map((session) => session.id));
+          return [...prev, ...page.filter((session) => !loadedIds.has(session.id))];
         });
+        setHistoryStatus(data.length > SESSION_PAGE_SIZE ? 'more' : 'complete');
       })
       .catch((err) => {
-        if (!controller.signal.aborted) console.error('Failed to load chat sessions', err);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingSessions(false);
+        if (controller.signal.aborted) return;
+        console.error('Failed to load chat sessions', err);
+        setHistoryStatus('error');
       });
+
+    return () => {
+      controller.abort();
+      historyRequestRef.current = null;
+    };
+  }, [workspacePath, historyStatus, sessions.length, historyRevision]);
+
+  useEffect(() => {
+    if (!workspacePath) return;
+    const controller = new AbortController();
     apiClient.get<ChatKnowledgeBase[]>(`${workspacePath}/knowledge-bases`, { signal: controller.signal })
       .then(({ data }) => setKnowledgeBases(data))
       .catch((err) => {
@@ -136,6 +180,7 @@ function ChatWorkspace() {
 
     return () => {
       controller.abort();
+      historyMutationRef.current?.abort();
       requestRef.current?.abort();
     };
   }, [workspacePath]);
@@ -156,20 +201,32 @@ function ChatWorkspace() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setSessionError(err.response?.status === 403 ? '您无权查阅此对话。' : '无法加载对话，请切换会话后重试。');
+        setSessionError(err.response?.status === 403 ? 'forbidden' : 'unavailable');
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoadingMessages(false);
       });
 
     return () => controller.abort();
-  }, [workspacePath, currentSessionId]);
+  }, [workspacePath, currentSessionId, messageRequestVersion]);
+
+  const retryMessages = () => {
+    if (sessionError !== 'unavailable') return;
+    setSessionError(null);
+    setLoadingMessages(true);
+    setMessageRequestVersion((version) => version + 1);
+  };
 
   const selectSession = (sessionId: string | null) => {
-    if (requestRef.current || sessionId === currentSessionId) return;
+    if (requestRef.current) return;
+    if (sessionId === currentSessionId) {
+      retryMessages();
+      return;
+    }
+    jumpToLatest();
     setCurrentSessionId(sessionId);
     setLoadingMessages(sessionId !== null);
-    setSessionError('');
+    setSessionError(null);
     setSendError('');
     setMessages([]);
     setAnswerIndex(null);
@@ -190,28 +247,46 @@ function ChatWorkspace() {
     }
   };
 
+  const startHistoryMutation = (controller: AbortController) => {
+    historyMutationRef.current = controller;
+    // A create or delete shifts the server offsets. Resume the page after the change settles.
+    historyRequestRef.current?.abort();
+  };
+
+  const finishHistoryMutation = () => {
+    historyMutationRef.current = null;
+    setHistoryRevision((revision) => revision + 1);
+  };
+
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    if (!workspacePath || requestRef.current) return;
+    if (!workspacePath || requestRef.current || historyMutationRef.current) return;
     if (!window.confirm('确定要删除该对话会话及所有历史记录吗？')) return;
 
+    const controller = new AbortController();
+    startHistoryMutation(controller);
+    setDeletingSession(true);
     try {
       await apiClient.delete(
-        `${workspacePath}/chat/sessions/${sessionId}`
+        `${workspacePath}/chat/sessions/${sessionId}`, { signal: controller.signal },
       );
+      if (controller.signal.aborted) return;
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       if (currentSessionId === sessionId) {
         selectSession(null);
       }
     } catch (err) {
-      console.error('Failed to delete session', err);
+      if (!controller.signal.aborted) console.error('Failed to delete session', err);
+    } finally {
+      setDeletingSession(false);
+      finishHistoryMutation();
     }
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const userText = inputContent.trim();
-    if (!userText || requestRef.current || loadingMessages || sessionError || !workspacePath) return;
+    if (!userText || customModelMissing || requestRef.current || historyMutationRef.current || loadingMessages || sessionError || !workspacePath) return;
 
     setSendError('');
     const controller = new AbortController();
@@ -219,6 +294,7 @@ function ChatWorkspace() {
     setIsStreaming(true);
     let targetSessionId = currentSessionId;
     if (!targetSessionId) {
+      startHistoryMutation(controller);
       try {
         const { data } = await apiClient.post<ChatSession>(
           `${workspacePath}/chat/sessions`,
@@ -235,10 +311,13 @@ function ChatWorkspace() {
         setIsStreaming(false);
         setSendError('无法创建对话，问题已保留。请重新发送。');
         return;
+      } finally {
+        finishHistoryMutation();
       }
     }
 
     const responseIndex = messages.length + 1;
+    jumpToLatest();
     setInputContent('');
 
     // Add user message to UI
@@ -261,7 +340,7 @@ function ChatWorkspace() {
       top_k: topK,
       min_similarity: minSimilarity,
       enable_agent: enableAgent,
-      model: selectedModel.trim() || undefined,
+      model: model || undefined,
     };
 
     let accumulatedTokens = '';
@@ -374,13 +453,11 @@ function ChatWorkspace() {
           setAnswerIndex(responseIndex);
           setActiveCitation(null);
           setShowSources(true);
-          if (!enableAgent) {
-            setSessions((prev) => prev.map((session) =>
-              session.id === targetSessionId && session.title === '新建对话'
-                ? { ...session, title: userText.slice(0, 30) }
-                : session,
-            ));
-          }
+          setSessions((prev) => prev.map((session) =>
+            session.id === targetSessionId && session.title === '新建对话'
+              ? { ...session, title: userText.slice(0, 30) }
+              : session,
+          ));
         }
       },
       onError: (err) => interruptAnswer(err.message),
@@ -407,7 +484,7 @@ function ChatWorkspace() {
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
       {chatNavigation && createPortal(
         <section className="space-y-2 border-t border-neutral-200 p-3">
-          <button type="button" disabled={isStreaming || !workspacePath} onClick={() => {
+          <button type="button" disabled={isStreaming || deletingSession || !workspacePath} onClick={() => {
             selectSession(null);
             closeNavigation();
             inputRef.current?.focus();
@@ -423,23 +500,37 @@ function ChatWorkspace() {
           {showHistory && (
             <div className="space-y-1">
               {isOwnerOrAdmin && <p className="px-3 text-xs text-neutral-600">包含成员会话</p>}
-              {loadingSessions ? <p className="px-3 py-2 text-xs text-neutral-600">正在加载会话…</p>
-                : sessions.length === 0 && <p className="px-3 py-2 text-xs text-neutral-600">暂无会话</p>}
+              {historyStatus === 'complete' && sessions.length === 0 &&
+                <p className="px-3 py-2 text-xs text-neutral-600">暂无会话</p>}
               {sessions.map((session) => (
                 <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
-                  <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming} onClick={() => {
+                  <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming || deletingSession} onClick={() => {
                     selectSession(session.id);
                     closeNavigation();
                   }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
                     {session.title}
                     {isOwnerOrAdmin && session.user_id && session.user_id !== user?.id && <span className="ml-1.5 text-xs text-neutral-600">成员</span>}
                   </button>
-                  <button type="button" disabled={isStreaming} onClick={(e) => handleDeleteSession(e, session.id)} title="删除会话"
+                  <button type="button" disabled={isStreaming || deletingSession} onClick={(e) => handleDeleteSession(e, session.id)} title="删除会话"
                     className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
               ))}
+              {historyStatus === 'loading' && (
+                <p role="status" className="px-3 py-2 text-xs text-neutral-600">
+                  {sessions.length ? '正在加载更多会话…' : '正在加载会话…'}
+                </p>
+              )}
+              {historyStatus === 'error' && (
+                <p role="status" className="px-3 py-2 text-xs text-neutral-600">无法加载会话历史。</p>
+              )}
+              {(historyStatus === 'more' || historyStatus === 'error') && (
+                <button type="button" disabled={deletingSession} onClick={() => setHistoryStatus('loading')}
+                  className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
+                  {historyStatus === 'error' ? '重试加载会话' : '加载更多会话'}
+                </button>
+              )}
             </div>
           )}
         </section>,
@@ -493,20 +584,15 @@ function ChatWorkspace() {
               </div>
 
               <div>
-                <label className="font-semibold block mb-1 text-neutral-700 flex items-center gap-1.5">
+                <label htmlFor="chat-model" className="font-semibold block mb-1 text-neutral-700 flex items-center gap-1.5">
                   <Cpu className="w-3.5 h-3.5 text-indigo-700" />
-                  切换运行模型 (Model)
+                  运行模型
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <select
-                    value={['', 'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(selectedModel) ? selectedModel : 'custom'}
-                    onChange={(e) => {
-                      if (e.target.value !== 'custom') {
-                        setSelectedModel(e.target.value);
-                      } else if (selectedModel === '') {
-                        setSelectedModel('qwen2.5:1.5b');
-                      }
-                    }}
+                    id="chat-model"
+                    value={modelOption}
+                    onChange={(e) => setModelOption(e.target.value)}
                     className="bg-white border border-neutral-300 rounded px-2.5 py-1.5 text-neutral-800 text-xs focus:outline-none focus:border-blue-500"
                   >
                     <option value="">默认 (环境变量配置)</option>
@@ -518,13 +604,14 @@ function ChatWorkspace() {
                     <option value="deepseek-chat">deepseek-chat</option>
                     <option value="custom">自定义输入名称...</option>
                   </select>
-                  {!['', 'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b', 'gpt-4o-mini', 'gpt-4o', 'deepseek-chat'].includes(selectedModel) && (
+                  {modelOption === 'custom' && (
                     <input
                       type="text"
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      placeholder="如: llama3.2:1b"
-                      className="flex-1 bg-white border border-neutral-300 rounded px-2 py-1 text-neutral-800 text-xs focus:outline-none focus:border-blue-500"
+                      aria-label="自定义模型名称"
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="请输入模型名称"
+                      className="min-w-36 flex-1 bg-white border border-neutral-300 rounded px-2 py-1 text-neutral-800 text-xs focus:outline-none focus:border-blue-500"
                     />
                   )}
                 </div>
@@ -564,10 +651,26 @@ function ChatWorkspace() {
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+        <div
+          id="chat-transcript"
+          ref={transcriptRef}
+          onScroll={(event) => trackReadingPosition(event.currentTarget)}
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8"
+        >
           <div className="mx-auto max-w-3xl space-y-6">
-          {loadingMessages || sessionError ? (
-            <p role="status" className="text-sm text-neutral-600">{sessionError || '正在加载对话…'}</p>
+          {loadingMessages ? (
+            <p role="status" className="text-sm text-neutral-600">正在加载对话…</p>
+          ) : sessionError ? (
+            <div className="space-y-2 text-sm">
+              <p role="status" className="text-neutral-600">
+                {sessionError === 'forbidden' ? '您无权查阅此对话。' : '无法加载对话，请重试。'}
+              </p>
+              {sessionError === 'unavailable' && (
+                <button type="button" onClick={retryMessages} className="font-medium text-indigo-700 hover:underline">
+                  重试加载对话
+                </button>
+              )}
+            </div>
           ) : messages.length === 0 ? (
             <div className="pt-8 sm:pt-16">
               <span className="mb-5 inline-flex rounded-2xl bg-indigo-50 p-3 text-indigo-700"><Sparkles className="size-6" /></span>
@@ -685,11 +788,19 @@ function ChatWorkspace() {
               );
             })
           )}
-          <div ref={messagesEndRef} />
           </div>
         </div>
 
-        <div className="shrink-0 px-4 pb-5 pt-2 sm:px-8">
+        <div className="relative shrink-0 px-4 pb-5 pt-2 sm:px-8">
+          {showJumpToLatest && (
+            <button type="button" onClick={jumpToLatest}
+              className="absolute bottom-full left-1/2 z-10 mb-2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium whitespace-nowrap shadow-sm hover:bg-neutral-100">
+              <ArrowDown className="size-3.5" aria-hidden="true" /> 跳到最新消息
+            </button>
+          )}
+          {customModelMissing && !showConfig && (
+            <p role="status" className="mx-auto mb-2 max-w-3xl text-sm text-neutral-600">请在检索与模型参数中填写模型名称。</p>
+          )}
           {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
           <form onSubmit={handleSendMessage} className="mx-auto max-w-3xl rounded-2xl border border-neutral-300 bg-white p-3 shadow-xs focus-within:border-indigo-400">
             <textarea
@@ -741,7 +852,7 @@ function ChatWorkspace() {
                   <Square className="size-4 fill-current" />
                 </button>
               ) : (
-                <button type="submit" aria-label="发送问题" disabled={!inputContent.trim() || !workspacePath || loadingMessages || !!sessionError}
+                <button type="submit" aria-label="发送问题" disabled={!inputContent.trim() || customModelMissing || !workspacePath || deletingSession || loadingMessages || !!sessionError}
                   className="rounded-xl bg-indigo-700 p-2.5 text-white hover:bg-indigo-800 disabled:bg-neutral-200 disabled:text-neutral-600">
                   <ArrowUp className="size-4" />
                 </button>

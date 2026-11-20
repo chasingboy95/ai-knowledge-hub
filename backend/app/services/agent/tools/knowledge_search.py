@@ -61,6 +61,7 @@ class KnowledgeSearchTool(BaseTool):
                     "document_id": str(c.document_id),
                     "document_title": c.document_title,
                     "chunk_index": c.chunk_index,
+                    "page_number": c.page_number,
                     "similarity": c.similarity,
                     "content": c.content,
                 })

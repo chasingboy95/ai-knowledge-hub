@@ -75,14 +75,40 @@ interface ReindexRequest {
   queuedAt?: number;
 }
 
+interface DocumentLoadScope {
+  signal: AbortSignal;
+  running: boolean;
+  reloadAfterCurrent: boolean;
+}
+
 export const KnowledgeBaseDetail: React.FC = () => {
   const { id: kbId } = useParams<{ id: string }>();
   const { currentOrg, currentWorkspace, hasPermission } = useAuth();
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  if (!currentOrg || !currentWorkspace || !kbId) return null;
+
+  const documentsPath = `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`;
+  return (
+    <KnowledgeBaseDocuments
+      key={documentsPath}
+      kbId={kbId}
+      documentsPath={documentsPath}
+      canUpload={hasPermission('document:upload')}
+      canDelete={hasPermission('document:delete')}
+    />
+  );
+};
+
+const KnowledgeBaseDocuments: React.FC<{
+  kbId: string;
+  documentsPath: string;
+  canUpload: boolean;
+  canDelete: boolean;
+}> = ({ kbId, documentsPath, canUpload, canDelete }) => {
+  const [documents, setDocuments] = useState<DocumentItem[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [reindexRequests, setReindexRequests] = useState(new Map<string, ReindexRequest>());
-  const [loading, setLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -91,55 +117,70 @@ export const KnowledgeBaseDetail: React.FC = () => {
   const [chunksLoading, setChunksLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadScope = useRef<DocumentLoadScope | null>(null);
 
-  const canUpload = hasPermission('document:upload');
-  const canDelete = hasPermission('document:delete');
+  const fetchDocs = useCallback(async (afterMutation = false) => {
+    const scope = loadScope.current;
+    if (!scope || scope.signal.aborted) return;
+    if (scope.running) {
+      if (afterMutation) scope.reloadAfterCurrent = true;
+      return;
+    }
 
-  const fetchDocs = useCallback(async (silent = false) => {
-    if (!currentOrg || !currentWorkspace || !kbId) return;
-    if (!silent) setLoading(true);
+    scope.running = true;
     setIsRefreshing(true);
     try {
-      const res = await apiClient.get<DocumentItem[]>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`
-      );
-      setDocuments(res.data);
-      setReindexRequests((requests) => {
-        if (!requests.size) return requests;
-        const now = Date.now();
-        const current = new Map(requests);
-        for (const doc of res.data) {
-          const request = current.get(doc.id);
-          if (request?.queuedAt && (doc.updated_at !== request.previousUpdatedAt || now - request.queuedAt >= 10_000)) {
-            current.delete(doc.id);
-          }
+      do {
+        scope.reloadAfterCurrent = false;
+        try {
+          const { data } = await apiClient.get<DocumentItem[]>(documentsPath, { signal: scope.signal });
+          // A mutation completed during this request. Read a fresh snapshot before updating the list.
+          if (scope.signal.aborted || scope.reloadAfterCurrent) continue;
+          setDocuments(data);
+          setLoadError(false);
+          setReindexRequests((requests) => {
+            if (!requests.size) return requests;
+            const now = Date.now();
+            const current = new Map(requests);
+            for (const doc of data) {
+              const request = current.get(doc.id);
+              if (request?.queuedAt && (doc.updated_at !== request.previousUpdatedAt || now - request.queuedAt >= 10_000)) {
+                current.delete(doc.id);
+              }
+            }
+            return current.size === requests.size ? requests : current;
+          });
+        } catch (err) {
+          if (scope.signal.aborted || scope.reloadAfterCurrent) continue;
+          console.error('Failed to load documents', err);
+          setLoadError(true);
         }
-        return current.size === requests.size ? requests : current;
-      });
-    } catch (err) {
-      console.error('Failed to load documents', err);
+      } while (scope.reloadAfterCurrent && !scope.signal.aborted);
     } finally {
-      if (!silent) setLoading(false);
-      setIsRefreshing(false);
+      scope.running = false;
+      if (!scope.signal.aborted) setIsRefreshing(false);
     }
-  }, [currentOrg, currentWorkspace, kbId]);
+  }, [documentsPath]);
 
   useEffect(() => {
-    fetchDocs();
+    const controller = new AbortController();
+    loadScope.current = { signal: controller.signal, running: false, reloadAfterCurrent: false };
+    void fetchDocs();
+    return () => controller.abort();
   }, [fetchDocs]);
 
-  const documentRows = documents.map((doc) => {
+  const documentRows = documents?.map((doc) => {
     const status = reindexRequests.get(doc.id)?.queuedAt ? 'UPLOADED' : doc.status;
     return { doc, status, group: getStatusGroup(status) };
-  });
-  const statusCounts = { all: documents.length, pending: 0, processing: 0, failed: 0, ready: 0 };
+  }) ?? [];
+  const statusCounts = { all: documentRows.length, pending: 0, processing: 0, failed: 0, ready: 0 };
   for (const { group } of documentRows) statusCounts[group]++;
   const visibleRows = statusFilter === 'all' ? documentRows : documentRows.filter(({ group }) => group === statusFilter);
   const hasProcessingDocs = statusCounts.pending > 0 || statusCounts.processing > 0;
 
   useEffect(() => {
     if (!hasProcessingDocs && !uploading) return;
-    const timer = setInterval(() => fetchDocs(true), 2500);
+    const timer = setInterval(() => fetchDocs(), 2500);
     return () => clearInterval(timer);
   }, [fetchDocs, hasProcessingDocs, uploading]);
 
@@ -156,7 +197,8 @@ export const KnowledgeBaseDetail: React.FC = () => {
       alert('请选择有效的非空文件上传');
       return;
     }
-    if (!currentOrg || !currentWorkspace || !kbId) return;
+    const signal = loadScope.current?.signal;
+    if (!signal || signal.aborted) return;
 
     setUploading(true);
     setUploadProgress({
@@ -177,14 +219,16 @@ export const KnowledgeBaseDetail: React.FC = () => {
         const currentIndex = index++;
         const file = validFiles[currentIndex];
 
-        setUploadProgress((prev) => (prev ? { ...prev, currentName: file.name } : null));
+        if (!signal.aborted) {
+          setUploadProgress((prev) => (prev ? { ...prev, currentName: file.name } : null));
+        }
 
         const formData = new FormData();
         formData.append('file', file);
 
         try {
           await apiClient.post(
-            `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`,
+            documentsPath,
             formData,
             {
               headers: { 'Content-Type': 'multipart/form-data' },
@@ -192,16 +236,18 @@ export const KnowledgeBaseDetail: React.FC = () => {
           );
           successCount++;
           // Fetch immediately after each upload completes to show latest status in table
-          fetchDocs(true);
+          if (!signal.aborted) void fetchDocs(true);
         } catch (err: any) {
           failedFiles.push({
             name: file.name,
             reason: err.response?.data?.detail || err.message || '上传处理失败',
           });
         } finally {
-          setUploadProgress((prev) =>
-            prev ? { ...prev, completed: Math.min(prev.completed + 1, prev.total) } : null
-          );
+          if (!signal.aborted) {
+            setUploadProgress((prev) =>
+              prev ? { ...prev, completed: Math.min(prev.completed + 1, prev.total) } : null
+            );
+          }
         }
       }
     };
@@ -209,9 +255,10 @@ export const KnowledgeBaseDetail: React.FC = () => {
     const workers = Array.from({ length: Math.min(CONCURRENCY, validFiles.length) }, () => worker());
     await Promise.all(workers);
 
+    if (signal.aborted) return;
     setUploading(false);
     setUploadProgress(null);
-    fetchDocs(true);
+    if (successCount === 0) void fetchDocs(true);
 
     if (failedFiles.length > 0) {
       alert(
@@ -255,18 +302,20 @@ export const KnowledgeBaseDetail: React.FC = () => {
 
   const handleReindex = async ({ id: docId, updated_at }: DocumentItem) => {
     if (!canUpload || reindexRequests.has(docId)) return;
-    if (!currentOrg || !currentWorkspace || !kbId) return;
+    const signal = loadScope.current?.signal;
+    if (!signal || signal.aborted) return;
     const request: ReindexRequest = { previousUpdatedAt: updated_at };
     setReindexRequests((requests) => new Map(requests).set(docId, request));
     try {
-      await apiClient.post(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}/reindex`
-      );
+      await apiClient.post(`${documentsPath}/${docId}/reindex`);
+      if (signal.aborted) return;
       // The endpoint returns before the background job updates the document status.
       setReindexRequests((requests) => requests.get(docId) === request
         ? new Map(requests).set(docId, { ...request, queuedAt: Date.now() })
         : requests);
+      void fetchDocs(true);
     } catch (err: any) {
+      if (signal.aborted) return;
       setReindexRequests((requests) => {
         const current = new Map(requests);
         current.delete(docId);
@@ -279,31 +328,29 @@ export const KnowledgeBaseDetail: React.FC = () => {
   const handleDelete = async (docId: string) => {
     if (!canDelete) return;
     if (!window.confirm('确认删除此文档并物理清理切块与向量？')) return;
-    if (!currentOrg || !currentWorkspace || !kbId) return;
+    const signal = loadScope.current?.signal;
+    if (!signal || signal.aborted) return;
 
     try {
-      await apiClient.delete(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}`
-      );
-      fetchDocs(true);
+      await apiClient.delete(`${documentsPath}/${docId}`);
+      if (!signal.aborted) void fetchDocs(true);
     } catch (err: any) {
-      alert(err.response?.data?.detail || '删除文档失败');
+      if (!signal.aborted) alert(err.response?.data?.detail || '删除文档失败');
     }
   };
 
   const viewChunks = async (docId: string) => {
-    if (!currentOrg || !currentWorkspace || !kbId) return;
+    const signal = loadScope.current?.signal;
+    if (!signal || signal.aborted) return;
     setSelectedDocId(docId);
     setChunksLoading(true);
     try {
-      const res = await apiClient.get(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}`
-      );
-      setChunks(res.data.chunks || []);
+      const res = await apiClient.get(`${documentsPath}/${docId}`, { signal });
+      if (!signal.aborted) setChunks(res.data.chunks || []);
     } catch (err) {
-      console.error('Failed to load chunks', err);
+      if (!signal.aborted) console.error('Failed to load chunks', err);
     } finally {
-      setChunksLoading(false);
+      if (!signal.aborted) setChunksLoading(false);
     }
   };
 
@@ -465,38 +512,48 @@ export const KnowledgeBaseDetail: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => fetchDocs(false)}
-            disabled={loading || isRefreshing}
-            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs transition cursor-pointer"
-            title="手动刷新文档状态"
+            onClick={() => void fetchDocs()}
+            disabled={isRefreshing}
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs transition cursor-pointer disabled:cursor-wait"
+            title={loadError ? '重试加载文档列表' : '手动刷新文档状态'}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-orange-600' : ''}`} />
-            <span>刷新状态</span>
+            <span>{loadError ? '重试加载' : '刷新状态'}</span>
           </button>
         </div>
-        <div role="group" aria-label="文档状态筛选" className="px-4 sm:px-6 py-3 flex flex-wrap gap-2 border-b border-slate-100">
-          {statusFilters.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={statusFilter === value}
-              onClick={() => setStatusFilter(value)}
-              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
-                statusFilter === value
-                  ? 'border-orange-200 bg-orange-50 text-orange-800'
-                  : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {label}
-              <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${
-                statusFilter === value ? 'bg-orange-100' : 'bg-slate-100'
-              }`}>{statusCounts[value]}</span>
-            </button>
-          ))}
-        </div>
 
-        {loading ? (
-          <div className="p-8 text-center text-slate-400 text-sm">加载文档列表中...</div>
+        {loadError && (
+          <div role="alert" className="flex items-center gap-2 bg-amber-50 px-4 sm:px-6 py-3 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>无法加载文档列表。{documents !== null && '当前显示上次加载结果。'}</span>
+          </div>
+        )}
+
+        {documents !== null && (
+          <div role="group" aria-label="文档状态筛选" className="px-4 sm:px-6 py-3 flex flex-wrap gap-2 border-b border-slate-100">
+            {statusFilters.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={statusFilter === value}
+                onClick={() => setStatusFilter(value)}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                  statusFilter === value
+                    ? 'border-orange-200 bg-orange-50 text-orange-800'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {label}
+                <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${
+                  statusFilter === value ? 'bg-orange-100' : 'bg-slate-100'
+                }`}>{statusCounts[value]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {documents === null ? (
+          !loadError && <div role="status" className="p-8 text-center text-slate-400 text-sm">加载文档列表中...</div>
         ) : documents.length === 0 ? (
           <div className="p-12 text-center text-slate-500 space-y-2">
             <FileText className="w-10 h-10 text-slate-300 mx-auto" />

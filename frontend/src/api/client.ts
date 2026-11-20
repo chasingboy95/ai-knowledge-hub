@@ -1,4 +1,11 @@
-import axios from 'axios';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
+import { readAuthSession, renewAuthSession, type AuthSession } from './authSession.ts';
+
+type AuthRequest = InternalAxiosRequestConfig & {
+  authRetryGeneration?: number;
+};
+
+const requestSessions = new WeakMap<InternalAxiosRequestConfig, AuthSession>();
 
 export const apiClient = axios.create({
   baseURL: '/api/v1',
@@ -7,54 +14,30 @@ export const apiClient = axios.create({
   },
 });
 
-// Request interceptor to attach JWT Token
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
+apiClient.interceptors.request.use((config: AuthRequest) => {
+  const session = readAuthSession();
+  if (config.authRetryGeneration !== undefined && config.authRetryGeneration !== session.generation) {
+    throw new axios.CanceledError('账号已切换');
   }
+  requestSessions.set(config, session);
+  if (session.accessToken) config.headers.Authorization = `Bearer ${session.accessToken}`;
   return config;
 });
 
-// Response interceptor for automatic refresh or logout on 401
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      const refreshToken = localStorage.getItem('refresh_token');
-      if (!refreshToken) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
-          window.location.href = '/login';
-        }
-        return Promise.reject(error);
-      }
-
-      try {
-        const refreshRes = await axios.post('/api/v1/auth/refresh', {
-          refresh_token: refreshToken,
-        });
-        const newToken = refreshRes.data.access_token;
-        const newRefreshToken = refreshRes.data.refresh_token;
-        if (newToken) {
-          localStorage.setItem('access_token', newToken);
-          if (newRefreshToken) {
-            localStorage.setItem('refresh_token', newRefreshToken);
-          }
-          originalRequest.headers.Authorization = `Bearer ${newToken}`;
-          return apiClient(originalRequest);
-        }
-      } catch (refreshErr) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
-          window.location.href = '/login';
-        }
-      }
+    const request: AuthRequest | undefined = error.config;
+    if (error.response?.status !== 401 || !request || request.authRetryGeneration !== undefined ||
+        request.signal?.aborted || request.url?.startsWith('/auth/')) {
+      throw error;
     }
-    return Promise.reject(error);
-  }
+
+    const requestedSession = requestSessions.get(request);
+    if (!requestedSession) throw error;
+    const session = await renewAuthSession(requestedSession);
+    if (!session?.accessToken || request.signal?.aborted) throw error;
+    request.authRetryGeneration = session.generation;
+    return apiClient(request);
+  },
 );
