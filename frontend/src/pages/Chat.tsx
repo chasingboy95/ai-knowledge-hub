@@ -72,6 +72,13 @@ function ChatWorkspace() {
   // Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const currentSession = sessions.find((session) => session.id === currentSessionId);
+  const isOwnSession = (session?: ChatSession) => !!user && session?.user_id === user.id;
+  const isReviewSession = currentSessionId !== null && !isOwnSession(currentSession);
+  const historyGroups = isOwnerOrAdmin ? [
+    { label: '我的会话', sessions: sessions.filter(isOwnSession) },
+    { label: '审查会话', sessions: sessions.filter((session) => !isOwnSession(session)) },
+  ] : [{ label: '我的会话', sessions }];
   const [historyStatus, setHistoryStatus] = useState<'loading' | 'more' | 'complete' | 'error'>(
     workspacePath ? 'loading' : 'complete',
   );
@@ -258,11 +265,11 @@ function ChatWorkspace() {
     setHistoryRevision((revision) => revision + 1);
   };
 
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    if (!workspacePath || requestRef.current || historyMutationRef.current) return;
+  const handleDeleteSession = async (session: ChatSession) => {
+    if (!isOwnSession(session) || !workspacePath || requestRef.current || historyMutationRef.current) return;
     if (!window.confirm('确定要删除该对话会话及所有历史记录吗？')) return;
 
+    const sessionId = session.id;
     const controller = new AbortController();
     startHistoryMutation(controller);
     setDeletingSession(true);
@@ -286,7 +293,7 @@ function ChatWorkspace() {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const userText = inputContent.trim();
-    if (!userText || customModelMissing || requestRef.current || historyMutationRef.current || loadingMessages || sessionError || !workspacePath) return;
+    if (isReviewSession || !userText || customModelMissing || requestRef.current || historyMutationRef.current || loadingMessages || sessionError || !workspacePath) return;
 
     setSendError('');
     const controller = new AbortController();
@@ -499,22 +506,27 @@ function ChatWorkspace() {
           </button>
           {showHistory && (
             <div className="space-y-1">
-              {isOwnerOrAdmin && <p className="px-3 text-xs text-neutral-600">包含成员会话</p>}
               {historyStatus === 'complete' && sessions.length === 0 &&
                 <p className="px-3 py-2 text-xs text-neutral-600">暂无会话</p>}
-              {sessions.map((session) => (
-                <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
-                  <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming || deletingSession} onClick={() => {
-                    selectSession(session.id);
-                    closeNavigation();
-                  }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
-                    {session.title}
-                    {isOwnerOrAdmin && session.user_id && session.user_id !== user?.id && <span className="ml-1.5 text-xs text-neutral-600">成员</span>}
-                  </button>
-                  <button type="button" disabled={isStreaming || deletingSession} onClick={(e) => handleDeleteSession(e, session.id)} title="删除会话"
-                    className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
-                    <Trash2 className="size-3.5" />
-                  </button>
+              {historyGroups.filter((group) => group.sessions.length > 0).map(({ label, sessions: groupSessions }) => (
+                <div key={label} role="group" aria-label={label} className="space-y-1">
+                  {isOwnerOrAdmin && <p className="px-3 pt-2 text-xs font-medium text-neutral-600">{label}</p>}
+                  {groupSessions.map((session) => (
+                    <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
+                      <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming || deletingSession} onClick={() => {
+                        selectSession(session.id);
+                        closeNavigation();
+                      }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
+                        {session.title}
+                      </button>
+                      {isOwnSession(session) && (
+                        <button type="button" disabled={isStreaming || deletingSession} onClick={() => handleDeleteSession(session)} title="删除会话"
+                          className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ))}
               {historyStatus === 'loading' && (
@@ -537,18 +549,22 @@ function ChatWorkspace() {
         chatNavigation,
       )}
 
-      <section aria-label="AI 问答" className="flex min-w-0 flex-1 flex-col">
+      <section aria-label={isReviewSession ? '会话审查' : 'AI 问答'} className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-15 shrink-0 items-center justify-between gap-2 border-b border-neutral-200 px-4 sm:px-6">
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold">{sessions.find((session) => session.id === currentSessionId)?.title || '新建对话'}</h1>
+            <h1 className="truncate text-sm font-semibold">{currentSession?.title || '新建对话'}</h1>
             {currentWorkspace && <p className="truncate text-xs text-neutral-600">{currentWorkspace.name}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {enableAgent && <span className="hidden text-xs font-medium text-indigo-700 sm:inline">Agent</span>}
-            <button type="button" aria-expanded={showConfig} aria-label="检索与模型参数"
-              onClick={() => setShowConfig(!showConfig)} className="rounded-lg border border-neutral-200 p-2 text-neutral-700 hover:bg-neutral-100">
-              <Sliders className="size-4" />
-            </button>
+            {!isReviewSession && (
+              <>
+                {enableAgent && <span className="hidden text-xs font-medium text-indigo-700 sm:inline">Agent</span>}
+                <button type="button" aria-expanded={showConfig} aria-label="检索与模型参数"
+                  onClick={() => setShowConfig(!showConfig)} className="rounded-lg border border-neutral-200 p-2 text-neutral-700 hover:bg-neutral-100">
+                  <Sliders className="size-4" />
+                </button>
+              </>
+            )}
             <button type="button" aria-expanded={resourcesOpen} aria-controls="chat-resources"
               onClick={() => setResourcesOpen(!resourcesOpen)}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-2 text-xs font-medium hover:bg-neutral-100 lg:hidden">
@@ -561,7 +577,7 @@ function ChatWorkspace() {
         </span>
 
         {/* Config Dropdown Drawer */}
-        {showConfig && (
+        {showConfig && !isReviewSession && (
           <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-neutral-200 bg-neutral-50 px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
             <div className="space-y-3">
               <div>
@@ -672,6 +688,8 @@ function ChatWorkspace() {
                 </button>
               )}
             </div>
+          ) : messages.length === 0 && isReviewSession ? (
+            <p className="text-sm text-neutral-600">这段会话暂无消息。</p>
           ) : messages.length === 0 ? (
             <div className="pt-8 sm:pt-16">
               <span className="mb-5 inline-flex rounded-2xl bg-indigo-50 p-3 text-indigo-700"><Sparkles className="size-6" /></span>
@@ -799,64 +817,76 @@ function ChatWorkspace() {
               <ArrowDown className="size-3.5" aria-hidden="true" /> 跳到最新消息
             </button>
           )}
-          {customModelMissing && !showConfig && (
-            <p role="status" className="mx-auto mb-2 max-w-3xl text-sm text-neutral-600">请在检索与模型参数中填写模型名称。</p>
-          )}
-          {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
-          <form onSubmit={handleSendMessage} className="mx-auto max-w-3xl rounded-2xl border border-neutral-300 bg-white p-3 shadow-xs focus-within:border-indigo-400">
-            <textarea
-              aria-label="输入问题"
-              ref={inputRef}
-              rows={2}
-              value={inputContent}
-              onChange={(e) => setInputContent(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
-              placeholder="向知识库提问…"
-              className="block w-full resize-none px-1 py-1.5 text-sm leading-relaxed outline-none"
-            />
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <details className="relative min-w-0">
-                <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100">
-                  <BookOpen className="size-4 shrink-0" />
-                  <span className="truncate">
-                    {selectedKbIds.length === 0 ? '全部知识库'
-                      : selectedKbIds.length === 1 ? knowledgeBases.find((kb) => kb.id === selectedKbIds[0])?.name
-                      : `已选 ${selectedKbIds.length} 个知识库`}
-                  </span>
-                  <ChevronDown className="size-3 shrink-0" />
-                </summary>
-                <div className="absolute bottom-full left-0 z-10 mb-2 max-h-52 w-60 max-w-[75vw] space-y-2 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-lg">
-                  {enableAgent && <p className="text-neutral-600">Agent 在此范围内自主检索。</p>}
-                  <button type="button" onClick={() => setSelectedKbIds([])}
-                    className="text-left font-medium text-indigo-700 hover:underline">检索全部知识库</button>
-                  {knowledgeBases.map((kb) => (
-                    <label key={kb.id} className="flex items-start gap-2">
-                      <input type="checkbox" checked={selectedKbIds.includes(kb.id)}
-                        onChange={(e) => setSelectedKbIds((ids) => e.target.checked ? [...ids, kb.id] : ids.filter((id) => id !== kb.id))}
-                        className="accent-indigo-600" />
-                      <span className="min-w-0 wrap-break-word">{kb.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </details>
-              {isStreaming ? (
-                <button type="button" aria-label="停止回答" onClick={handleStopStream}
-                  className="rounded-xl bg-neutral-900 p-2.5 text-white hover:bg-neutral-700">
-                  <Square className="size-4 fill-current" />
-                </button>
-              ) : (
-                <button type="submit" aria-label="发送问题" disabled={!inputContent.trim() || customModelMissing || !workspacePath || deletingSession || loadingMessages || !!sessionError}
-                  className="rounded-xl bg-indigo-700 p-2.5 text-white hover:bg-indigo-800 disabled:bg-neutral-200 disabled:text-neutral-600">
-                  <ArrowUp className="size-4" />
-                </button>
-              )}
+          {isReviewSession ? (
+            <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+              <span className="font-medium">只读审查</span>
+              <button type="button" onClick={() => selectSession(null)}
+                className="rounded-lg px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-100">
+                返回个人问答
+              </button>
             </div>
-          </form>
+          ) : (
+            <>
+              {customModelMissing && !showConfig && (
+                <p role="status" className="mx-auto mb-2 max-w-3xl text-sm text-neutral-600">请在检索与模型参数中填写模型名称。</p>
+              )}
+              {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
+              <form onSubmit={handleSendMessage} className="mx-auto max-w-3xl rounded-2xl border border-neutral-300 bg-white p-3 shadow-xs focus-within:border-indigo-400">
+                <textarea
+                  aria-label="输入问题"
+                  ref={inputRef}
+                  rows={2}
+                  value={inputContent}
+                  onChange={(e) => setInputContent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="向知识库提问…"
+                  className="block w-full resize-none px-1 py-1.5 text-sm leading-relaxed outline-none"
+                />
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <details className="relative min-w-0">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100">
+                      <BookOpen className="size-4 shrink-0" />
+                      <span className="truncate">
+                        {selectedKbIds.length === 0 ? '全部知识库'
+                          : selectedKbIds.length === 1 ? knowledgeBases.find((kb) => kb.id === selectedKbIds[0])?.name
+                          : `已选 ${selectedKbIds.length} 个知识库`}
+                      </span>
+                      <ChevronDown className="size-3 shrink-0" />
+                    </summary>
+                    <div className="absolute bottom-full left-0 z-10 mb-2 max-h-52 w-60 max-w-[75vw] space-y-2 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-lg">
+                      {enableAgent && <p className="text-neutral-600">Agent 在此范围内自主检索。</p>}
+                      <button type="button" onClick={() => setSelectedKbIds([])}
+                        className="text-left font-medium text-indigo-700 hover:underline">检索全部知识库</button>
+                      {knowledgeBases.map((kb) => (
+                        <label key={kb.id} className="flex items-start gap-2">
+                          <input type="checkbox" checked={selectedKbIds.includes(kb.id)}
+                            onChange={(e) => setSelectedKbIds((ids) => e.target.checked ? [...ids, kb.id] : ids.filter((id) => id !== kb.id))}
+                            className="accent-indigo-600" />
+                          <span className="min-w-0 wrap-break-word">{kb.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                  {isStreaming ? (
+                    <button type="button" aria-label="停止回答" onClick={handleStopStream}
+                      className="rounded-xl bg-neutral-900 p-2.5 text-white hover:bg-neutral-700">
+                      <Square className="size-4 fill-current" />
+                    </button>
+                  ) : (
+                    <button type="submit" aria-label="发送问题" disabled={!inputContent.trim() || customModelMissing || !workspacePath || deletingSession || loadingMessages || !!sessionError}
+                      className="rounded-xl bg-indigo-700 p-2.5 text-white hover:bg-indigo-800 disabled:bg-neutral-200 disabled:text-neutral-600">
+                      <ArrowUp className="size-4" />
+                    </button>
+                  )}
+                </div>
+              </form>
+            </>
+          )}
         </div>
       </section>
       <ChatResources
@@ -868,7 +898,7 @@ function ChatWorkspace() {
         knowledgeBases={knowledgeBases}
         onClose={() => setResourcesOpen(false)}
         onTabChange={setShowSources}
-        onExample={(question) => {
+        onExample={isReviewSession ? undefined : (question) => {
           setInputContent(question);
           setResourcesOpen(false);
           inputRef.current?.focus();

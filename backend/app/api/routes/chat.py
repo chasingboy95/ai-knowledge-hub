@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.deps import get_current_user, get_db_session, require_permission
+from backend.app.api.routes.workspaces import scoped_workspace
 from backend.app.core.config import Settings, get_settings
 from backend.app.models.chat import ChatSession
 from backend.app.models.organization import Membership
@@ -33,15 +34,58 @@ def get_agent(settings: Settings = Depends(get_settings)) -> AgentRunner:
     return get_agent_runner(settings)
 
 
+async def require_chat_workspace(
+    organization_id: UUID,
+    workspace_id: UUID,
+    membership: Membership = Depends(require_permission("knowledge:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> Membership:
+    await scoped_workspace(db, organization_id, workspace_id)
+    return membership
 
-def check_session_access(session: ChatSession, current_user: User, membership: Membership) -> None:
+
+def can_review_sessions(membership: Membership) -> bool:
     role_code = (membership.role.code if membership.role else "").upper()
-    is_admin = role_code in ("OWNER", "ADMIN")
-    if not is_admin and session.user_id != current_user.id:
+    return role_code in ("OWNER", "ADMIN")
+
+
+def check_session_owner(session: ChatSession, current_user: User) -> None:
+    if session.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: this chat session is private",
         )
+
+
+def check_session_read_access(session: ChatSession, current_user: User, membership: Membership) -> None:
+    if not can_review_sessions(membership):
+        check_session_owner(session, current_user)
+
+
+async def record_session_review(
+    db: AsyncSession,
+    organization_id: UUID,
+    session: ChatSession,
+    current_user: User,
+    read_target: str,
+) -> None:
+    if session.user_id == current_user.id:
+        return
+
+    payload = {"read_target": read_target}
+    if session.user_id is not None:
+        payload["owner_user_id"] = str(session.user_id)
+    await record_audit_log(
+        db=db,
+        organization_id=organization_id,
+        workspace_id=session.workspace_id,
+        user_id=current_user.id,
+        event_type="CHAT_SESSION_REVIEW",
+        resource_type="chat_session",
+        resource_id=str(session.id),
+        payload=payload,
+    )
+
 
 @router.post(
     "/{organization_id}/workspaces/{workspace_id}/chat/sessions",
@@ -52,7 +96,7 @@ async def create_chat_session(
     organization_id: UUID,
     workspace_id: UUID,
     payload: ChatSessionCreate | None = None,
-    _: Membership = Depends(require_permission("knowledge:read")),
+    _: Membership = Depends(require_chat_workspace),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -85,14 +129,12 @@ async def list_chat_sessions(
     workspace_id: UUID,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
-    membership: Membership = Depends(require_permission("knowledge:read")),
+    membership: Membership = Depends(require_chat_workspace),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
 ):
-    role_code = (membership.role.code if membership.role else "").upper()
-    is_admin = role_code in ("OWNER", "ADMIN")
-    filter_user_id = None if is_admin else current_user.id
+    filter_user_id = None if can_review_sessions(membership) else current_user.id
     return await rag_service.list_sessions(
         db=db,
         workspace_id=workspace_id,
@@ -110,7 +152,7 @@ async def get_chat_session(
     organization_id: UUID,
     workspace_id: UUID,
     session_id: UUID,
-    membership: Membership = Depends(require_permission("knowledge:read")),
+    membership: Membership = Depends(require_chat_workspace),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -120,7 +162,8 @@ async def get_chat_session(
         workspace_id=workspace_id,
         session_id=session_id,
     )
-    check_session_access(session, current_user, membership)
+    check_session_read_access(session, current_user, membership)
+    await record_session_review(db, organization_id, session, current_user, "metadata")
     return session
 
 
@@ -132,7 +175,7 @@ async def delete_chat_session(
     organization_id: UUID,
     workspace_id: UUID,
     session_id: UUID,
-    membership: Membership = Depends(require_permission("knowledge:read")),
+    _: Membership = Depends(require_chat_workspace),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -142,7 +185,7 @@ async def delete_chat_session(
         workspace_id=workspace_id,
         session_id=session_id,
     )
-    check_session_access(session, user, membership)
+    check_session_owner(session, user)
     await rag_service.delete_session(
         db=db,
         workspace_id=workspace_id,
@@ -168,7 +211,7 @@ async def list_chat_messages(
     organization_id: UUID,
     workspace_id: UUID,
     session_id: UUID,
-    membership: Membership = Depends(require_permission("knowledge:read")),
+    membership: Membership = Depends(require_chat_workspace),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -178,12 +221,14 @@ async def list_chat_messages(
         workspace_id=workspace_id,
         session_id=session_id,
     )
-    check_session_access(session, current_user, membership)
-    return await rag_service.get_messages(
+    check_session_read_access(session, current_user, membership)
+    messages = await rag_service.get_messages(
         db=db,
         workspace_id=workspace_id,
         session_id=session_id,
     )
+    await record_session_review(db, organization_id, session, current_user, "messages")
+    return messages
 
 
 @router.post(
@@ -195,7 +240,7 @@ async def stream_chat_message(
     workspace_id: UUID,
     session_id: UUID,
     payload: ChatMessageCreate,
-    membership: Membership = Depends(require_permission("knowledge:read")),
+    _: Membership = Depends(require_chat_workspace),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
     rag_service: RAGService = Depends(get_rag),
@@ -206,7 +251,7 @@ async def stream_chat_message(
         workspace_id=workspace_id,
         session_id=session_id,
     )
-    check_session_access(session, current_user, membership)
+    check_session_owner(session, current_user)
     await record_audit_log(
         db=db,
         organization_id=organization_id,

@@ -17,7 +17,7 @@ interface ChatResourcesProps {
   knowledgeBases: ChatKnowledgeBase[];
   onClose: () => void;
   onTabChange: (showSources: boolean) => void;
-  onExample: (question: string) => void;
+  onExample?: (question: string) => void;
 }
 
 const examples = [
@@ -102,19 +102,21 @@ export function ChatResources({
                 ))}
               </div>
             </section>
-            <section aria-labelledby="chat-example-heading">
-              <h2 id="chat-example-heading" className="mb-3 text-base font-semibold">试着问</h2>
-              <div className="space-y-2">
-                {examples.map((question) => (
-                  <button key={question} type="button" onClick={() => onExample(question)}
-                    className="flex w-full items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-3 text-left text-sm hover:border-indigo-300">
-                    <FileText className="size-4 shrink-0 text-neutral-500" />
-                    <span className="flex-1">{question}</span>
-                    <ArrowDownLeft className="size-4 shrink-0 text-neutral-500" />
-                  </button>
-                ))}
-              </div>
-            </section>
+            {onExample && (
+              <section aria-labelledby="chat-example-heading">
+                <h2 id="chat-example-heading" className="mb-3 text-base font-semibold">试着问</h2>
+                <div className="space-y-2">
+                  {examples.map((question) => (
+                    <button key={question} type="button" onClick={() => onExample(question)}
+                      className="flex w-full items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-3 text-left text-sm hover:border-indigo-300">
+                      <FileText className="size-4 shrink-0 text-neutral-500" />
+                      <span className="flex-1">{question}</span>
+                      <ArrowDownLeft className="size-4 shrink-0 text-neutral-500" />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>

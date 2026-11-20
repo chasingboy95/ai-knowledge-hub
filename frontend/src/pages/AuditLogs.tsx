@@ -214,6 +214,12 @@ function OrganizationAuditLogs({ organizationId }: { organizationId: string }) {
             <MessageSquare className="w-3 h-3" /> 删除问答会话
           </span>
         );
+      case 'CHAT_SESSION_REVIEW':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-100">
+            <MessageSquare className="w-3 h-3" /> 审查会话
+          </span>
+        );
       case 'RAG_QUERY':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800 border border-orange-200">
@@ -318,6 +324,7 @@ function OrganizationAuditLogs({ organizationId }: { organizationId: string }) {
               <optgroup label="💬 对话与智能体">
                 <option value="CHAT_SESSION_CREATE">CHAT_SESSION_CREATE (创建会话)</option>
                 <option value="CHAT_SESSION_DELETE">CHAT_SESSION_DELETE (删除会话)</option>
+                <option value="CHAT_SESSION_REVIEW">CHAT_SESSION_REVIEW (审查会话)</option>
                 <option value="RAG_QUERY">RAG_QUERY (RAG 语义问答)</option>
                 <option value="AGENT_TOOL_CALL">AGENT_TOOL_CALL (Agent 工具调用)</option>
               </optgroup>
