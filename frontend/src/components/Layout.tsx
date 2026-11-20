@@ -19,6 +19,7 @@ import {
   AlertCircle,
   Settings,
   Mail,
+  Menu,
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
@@ -29,6 +30,9 @@ export const Layout: React.FC = () => {
     workspaces,
     currentWorkspace,
     currentRole,
+    workspaceStatus,
+    membershipError,
+    reloadOrganizationContext,
     hasPermission,
     pendingInvitationsCount,
     switchOrganization,
@@ -38,6 +42,8 @@ export const Layout: React.FC = () => {
     logout,
   } = useAuth();
   const navigate = useNavigate();
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [chatNavigation, setChatNavigation] = useState<HTMLDivElement | null>(null);
 
   const [showOrgModal, setShowOrgModal] = useState(false);
   const [orgName, setOrgName] = useState('');
@@ -121,27 +127,30 @@ export const Layout: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
+    <div className="flex h-dvh overflow-hidden bg-white font-sans text-neutral-900">
+      {navigationOpen && (
+        <button type="button" aria-label="关闭导航" onClick={() => setNavigationOpen(false)}
+          className="fixed inset-0 z-30 bg-black/25 md:hidden" />
+      )}
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between flex-shrink-0 border-r border-slate-800">
-        <div>
+      <aside id="workspace-navigation" className={`inset-y-0 left-0 z-40 w-60 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white md:static md:flex ${navigationOpen ? 'fixed flex' : 'hidden'}`}>
+        <div className="min-h-0 overflow-y-auto">
           {/* Logo & Brand */}
-          <div className="p-5 border-b border-slate-800 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-orange-600 flex items-center justify-center text-white font-bold shadow-md shadow-orange-500/20">
+          <div className="p-5 border-b border-neutral-200 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-neutral-900 flex items-center justify-center text-white font-bold">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="font-bold text-white text-base tracking-tight leading-none">Knowledge Hub</h1>
-              <span className="text-[10px] text-orange-400 font-mono tracking-widest uppercase">Secure RAG &amp; Agent</span>
+              <h1 className="font-bold text-neutral-950 text-base tracking-tight leading-none">Knowledge Hub</h1>
             </div>
           </div>
 
           {/* Org & Workspace Selector */}
-          <div className="p-4 border-b border-slate-800/80 space-y-3">
+          <div className="p-4 border-b border-neutral-200 space-y-3">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[10px] uppercase font-mono tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Building2 className="w-3 h-3 text-slate-400" />
+                <label htmlFor="active-organization" className="text-[10px] uppercase font-mono tracking-wider text-neutral-600 flex items-center gap-1.5">
+                  <Building2 className="w-3 h-3 text-neutral-600" />
                   当前组织
                 </label>
                 <div className="flex items-center gap-1">
@@ -149,7 +158,7 @@ export const Layout: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowAcceptInviteModal(true)}
-                    className="relative p-1 text-slate-400 hover:text-orange-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                    className="relative p-1 text-neutral-600 hover:text-indigo-700 hover:bg-neutral-100 rounded transition cursor-pointer"
                     title="接受组织邀请 / 待办"
                   >
                     <Mail className="w-3.5 h-3.5" />
@@ -168,7 +177,7 @@ export const Layout: React.FC = () => {
                       setOrgError(null);
                       setShowOrgModal(true);
                     }}
-                    className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition cursor-pointer"
+                    className="p-1 text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 rounded transition cursor-pointer"
                     title="新建组织"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -177,12 +186,13 @@ export const Layout: React.FC = () => {
               </div>
               <div className="relative">
                 <select
+                  id="active-organization"
                   value={currentOrg?.id || ''}
                   onChange={(e) => {
                     const org = organizations.find((o) => o.id === e.target.value);
                     if (org) switchOrganization(org);
                   }}
-                  className="w-full bg-slate-800/90 text-slate-200 text-xs rounded-md px-2.5 py-1.5 appearance-none border border-slate-700/60 focus:outline-none focus:border-orange-500"
+                  className="w-full bg-neutral-50 text-neutral-800 text-xs rounded-md px-2.5 py-1.5 appearance-none border border-neutral-200 focus:outline-none focus:border-indigo-500"
                 >
                   {organizations.length === 0 ? (
                     <option value="">暂无可用组织</option>
@@ -194,14 +204,14 @@ export const Layout: React.FC = () => {
                     ))
                   )}
                 </select>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
+                <ChevronDown className="w-3.5 h-3.5 text-neutral-600 absolute right-2.5 top-2 pointer-events-none" />
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-[10px] uppercase font-mono tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Layers className="w-3 h-3 text-slate-400" />
+                <label htmlFor="active-workspace" className="text-[10px] uppercase font-mono tracking-wider text-neutral-600 flex items-center gap-1.5">
+                  <Layers className="w-3 h-3 text-neutral-600" />
                   工作区 (Workspace)
                 </label>
                 <button
@@ -213,8 +223,8 @@ export const Layout: React.FC = () => {
                     setWsError(null);
                     setShowWsModal(true);
                   }}
-                  disabled={!currentOrg || !hasPermission('workspace:create')}
-                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  disabled={workspaceStatus !== 'ready' || !hasPermission('workspace:create')}
+                  className="p-1 text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 rounded transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
                   title={hasPermission('workspace:create') ? '新建工作区' : '当前角色无工作区创建权限'}
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -222,16 +232,18 @@ export const Layout: React.FC = () => {
               </div>
               <div className="relative">
                 <select
+                  id="active-workspace"
                   value={currentWorkspace?.id || ''}
                   disabled={!currentOrg || workspaces.length === 0}
                   onChange={(e) => {
                     const ws = workspaces.find((w) => w.id === e.target.value);
                     if (ws) switchWorkspace(ws);
                   }}
-                  className="w-full bg-slate-800/90 text-slate-200 text-xs rounded-md px-2.5 py-1.5 appearance-none border border-slate-700/60 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+                  className="w-full bg-neutral-50 text-neutral-800 text-xs rounded-md px-2.5 py-1.5 appearance-none border border-neutral-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                 >
                   {workspaces.length === 0 ? (
-                    <option value="">暂无工作区</option>
+                    <option value="">{workspaceStatus === 'loading' ? '正在加载…'
+                      : workspaceStatus === 'error' ? '加载失败' : '暂无工作区'}</option>
                   ) : (
                     workspaces.map((ws) => (
                       <option key={ws.id} value={ws.id}>
@@ -240,7 +252,7 @@ export const Layout: React.FC = () => {
                     ))
                   )}
                 </select>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
+                <ChevronDown className="w-3.5 h-3.5 text-neutral-600 absolute right-2.5 top-2 pointer-events-none" />
               </div>
             </div>
           </div>
@@ -248,13 +260,28 @@ export const Layout: React.FC = () => {
           {/* Navigation Links - Filtered by Menu Permissions */}
           <nav className="p-3 space-y-1">
             <NavLink
-              to="/"
-              end
+              to="/chat"
+              onClick={() => setNavigationOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                   isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    ? 'bg-indigo-50 text-indigo-800'
+                    : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
+                }`
+              }
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>AI 问答</span>
+            </NavLink>
+
+            <NavLink
+              to="/overview"
+              onClick={() => setNavigationOpen(false)}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-800'
+                    : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
                 }`
               }
             >
@@ -264,11 +291,12 @@ export const Layout: React.FC = () => {
 
             <NavLink
               to="/knowledge-bases"
+              onClick={() => setNavigationOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                   isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    ? 'bg-indigo-50 text-indigo-800'
+                    : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
                 }`
               }
             >
@@ -277,26 +305,13 @@ export const Layout: React.FC = () => {
             </NavLink>
 
             <NavLink
-              to="/chat"
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                  isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`
-              }
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>智能问答 &amp; Agent</span>
-            </NavLink>
-
-            <NavLink
               to="/members"
+              onClick={() => setNavigationOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                   isActive
-                    ? 'bg-orange-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    ? 'bg-indigo-50 text-indigo-800'
+                    : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
                 }`
               }
             >
@@ -308,11 +323,12 @@ export const Layout: React.FC = () => {
             {hasPermission('audit:read') && (
               <NavLink
                 to="/audit"
+                  onClick={() => setNavigationOpen(false)}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                     isActive
-                      ? 'bg-orange-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      ? 'bg-indigo-50 text-indigo-800'
+                      : 'text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100'
                   }`
                 }
               >
@@ -321,35 +337,36 @@ export const Layout: React.FC = () => {
               </NavLink>
             )}
           </nav>
+          <div ref={setChatNavigation} />
         </div>
 
         {/* User Footer with Personal Settings */}
-        <div className="p-4 border-t border-slate-800/80 flex items-center justify-between">
+        <div className="p-4 border-t border-neutral-200 flex items-center justify-between">
           <div className="truncate flex-1 pr-2">
             <div className="flex items-center gap-1.5">
-              <p className="text-xs font-semibold text-slate-200 truncate">
+              <p className="text-xs font-semibold text-neutral-800 truncate">
                 {user?.full_name || user?.email}
               </p>
               {currentRole && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-800 text-orange-400 border border-slate-700">
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-medium bg-neutral-100 text-indigo-700 border border-neutral-200">
                   {getRoleText(currentRole)}
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-500 font-mono truncate">{user?.email}</p>
+            <p className="text-[10px] text-neutral-600 font-mono truncate">{user?.email}</p>
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setShowProfileModal(true)}
               title="个人信息维护与设置"
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition cursor-pointer"
+              className="p-1.5 text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 rounded-md transition cursor-pointer"
             >
               <Settings className="w-4 h-4" />
             </button>
             <button
               onClick={handleLogout}
               title="退出登录"
-              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-md transition cursor-pointer"
+              className="p-1.5 text-neutral-600 hover:text-red-400 hover:bg-neutral-100 rounded-md transition cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -358,7 +375,14 @@ export const Layout: React.FC = () => {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+        <div className="flex shrink-0 items-center gap-3 border-b border-neutral-200 px-4 py-2 md:hidden">
+          <button type="button" aria-label="打开导航" aria-controls="workspace-navigation" aria-expanded={navigationOpen}
+            onClick={() => setNavigationOpen(true)} className="rounded-lg p-2 hover:bg-neutral-100">
+            <Menu className="size-5" />
+          </button>
+          <span className="text-sm font-semibold">Knowledge Hub</span>
+        </div>
         {/* Banner if there are pending invitations */}
         {pendingInvitationsCount > 0 && (
           <div className="bg-gradient-to-r from-orange-600 to-amber-600 text-white px-6 py-2.5 flex items-center justify-between text-xs font-medium shadow-sm">
@@ -405,7 +429,16 @@ export const Layout: React.FC = () => {
               </button>
             </div>
           </div>
-        ) : workspaces.length === 0 ? (
+        ) : workspaceStatus === 'loading' ? (
+          <p role="status" className="m-6 text-sm text-neutral-600">正在加载当前组织的工作区…</p>
+        ) : workspaceStatus === 'error' || membershipError ? (
+          <div className="m-6 flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm">
+            <p role="alert">{workspaceStatus === 'error' ? '无法加载工作区。' : '无法加载组织权限。'}</p>
+            <button type="button" onClick={reloadOrganizationContext} className="font-medium text-indigo-700 hover:underline">
+              重试加载
+            </button>
+          </div>
+        ) : workspaceStatus === 'ready' && workspaces.length === 0 && currentRole ? (
           <div className="m-6 p-6 bg-blue-50 border border-blue-200 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
             <div>
               <h3 className="font-bold text-blue-900 text-base">组织【{currentOrg?.name}】尚未创建工作区</h3>
@@ -433,7 +466,12 @@ export const Layout: React.FC = () => {
           </div>
         ) : null}
 
-        <Outlet />
+        {workspaceStatus !== 'loading' && (
+          <Outlet
+            key={`${currentOrg?.id ?? ''}/${currentWorkspace?.id ?? ''}`}
+            context={{ chatNavigation, closeNavigation: () => setNavigationOpen(false) }}
+          />
+        )}
       </main>
 
       {/* Profile Maintenance Modal */}

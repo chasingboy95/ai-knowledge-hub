@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { marked, type Tokens, type Token } from 'marked';
 import { Check, Copy } from 'lucide-react';
+import { splitCitationText } from '../utils/chatSources';
 
 interface CodeBlockProps {
   code: string;
@@ -55,9 +56,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, lang }) => {
 interface MarkdownViewProps {
   content: string;
   isUser?: boolean;
+  citationNumbers?: ReadonlySet<number>;
+  onCitationClick?: (number: number) => void;
 }
 
-export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isUser = false }) => {
+export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isUser = false, citationNumbers, onCitationClick }) => {
   if (!content) return null;
 
   // Use marked lexer to convert markdown text into structured tokens
@@ -74,7 +77,23 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isUser = fa
     return inlineTokens.map((token, i) => {
       switch (token.type) {
         case 'text':
-          return (token as Tokens.Text).text;
+          if (token.tokens) return renderInlineTokens(token.tokens);
+          if (!onCitationClick || token.escaped) return (token as Tokens.Text).text;
+          return splitCitationText(token.text).map((part, index) => {
+            if (index % 2 === 0) return part;
+            const number = Number(part);
+            return citationNumbers?.has(number) ? (
+              <button
+                key={index}
+                type="button"
+                aria-label={`查看引用 ${number}`}
+                onClick={() => onCitationClick(number)}
+                className="mx-0.5 inline-flex rounded-md bg-indigo-50 px-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+              >
+                {number}
+              </button>
+            ) : `[^${part}]`;
+          });
         case 'strong':
           return (
             <strong key={i} className={`font-bold ${isUser ? 'text-white' : 'text-slate-900'}`}>
@@ -134,6 +153,8 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isUser = fa
             {renderInlineTokens((token as Tokens.Paragraph).tokens)}
           </p>
         );
+      case 'text':
+        return <React.Fragment key={index}>{renderInlineTokens([token])}</React.Fragment>;
       case 'heading': {
         const headingToken = token as Tokens.Heading;
         const depth = headingToken.depth;

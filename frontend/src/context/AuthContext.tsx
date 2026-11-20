@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 
 export interface User {
@@ -40,6 +40,8 @@ interface MyMembershipResponse {
   permissions: string[];
 }
 
+type WorkspaceStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 interface AuthContextType {
   user: User | null;
   organizations: Organization[];
@@ -58,9 +60,10 @@ interface AuthContextType {
   logout: () => void;
   switchOrganization: (org: Organization) => void;
   switchWorkspace: (ws: Workspace) => void;
-  refreshWorkspaces: (targetOrg?: Organization | null) => Promise<void>;
+  workspaceStatus: WorkspaceStatus;
+  membershipError: boolean;
+  reloadOrganizationContext: () => void;
   refreshOrganizations: () => Promise<void>;
-  refreshMembership: () => Promise<void>;
   refreshPendingInvitations: () => Promise<void>;
   updateUserProfile: (fullName: string) => Promise<void>;
   createOrganization: (name: string, slug: string) => Promise<Organization>;
@@ -74,91 +77,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceList, setWorkspaceList] = useState<Workspace[] | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
-  const [currentRole, setCurrentRole] = useState<string | null>(null);
-  const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
+  const [membership, setMembership] = useState<MyMembershipResponse | null>(null);
+  const [workspaceError, setWorkspaceError] = useState(false);
+  const [membershipError, setMembershipError] = useState(false);
+  const [contextVersion, setContextVersion] = useState(0);
+  const organizationId = currentOrg?.id ?? null;
+  const selectedOrgId = useRef<string | null>(null);
+  const contextRequest = useRef<AbortController | null>(null);
+  const accountVersion = useRef(0);
+  const workspaces = workspaceList ?? [];
+  const currentRole = membership?.role ?? null;
+  const currentPermissions = membership?.permissions ?? [];
+  const workspaceStatus: WorkspaceStatus = !organizationId ? 'idle'
+    : workspaceError ? 'error' : workspaceList === null ? 'loading' : 'ready';
   const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(!!token);
 
-  const fetchProfileAndOrgs = async () => {
-    try {
-      const profileRes = await apiClient.get<User>('/users/me');
-      setUser(profileRes.data);
+  const resetOrganizationContext = useCallback(() => {
+    contextRequest.current?.abort();
+    setWorkspaceList(null);
+    setCurrentWorkspace(null);
+    setMembership(null);
+    setWorkspaceError(false);
+    setMembershipError(false);
+  }, []);
 
-      const orgsRes = await apiClient.get<Organization[]>('/organizations');
-      setOrganizations(orgsRes.data);
-      if (orgsRes.data.length > 0) {
-        const savedOrgId = localStorage.getItem('current_org_id');
-        const defaultOrg = orgsRes.data.find((o) => o.id === savedOrgId) || orgsRes.data[0];
-        setCurrentOrg(defaultOrg);
-      } else {
-        setCurrentOrg(null);
-        setWorkspaces([]);
-        setCurrentWorkspace(null);
-        setCurrentRole(null);
-        setCurrentPermissions([]);
-        localStorage.removeItem('current_org_id');
-        localStorage.removeItem('current_workspace_id');
-      }
-
-      refreshPendingInvitations();
-    } catch {
-      logout();
-    } finally {
-      setIsLoading(false);
+  const selectOrganization = useCallback((org: Organization | null) => {
+    const id = org?.id ?? null;
+    if (id !== selectedOrgId.current) {
+      selectedOrgId.current = id;
+      resetOrganizationContext();
+      setContextVersion((version) => version + 1);
     }
-  };
+    setCurrentOrg(org);
+    if (id) localStorage.setItem('current_org_id', id);
+    else localStorage.removeItem('current_org_id');
+  }, [resetOrganizationContext]);
 
-  const refreshPendingInvitations = async () => {
+  const logout = useCallback(() => {
+    accountVersion.current++;
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('current_workspace_id');
+    const keysToRemove = Object.keys(localStorage).filter((key) => key.startsWith('current_workspace_id_'));
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+    selectOrganization(null);
+    setToken(null);
+    setUser(null);
+    setOrganizations([]);
+    setPendingInvitations([]);
+    setIsLoading(false);
+  }, [selectOrganization]);
+
+  const refreshPendingInvitations = useCallback(async () => {
+    const version = accountVersion.current;
     try {
       const res = await apiClient.get<PendingInvitation[]>('/invitations/pending');
-      setPendingInvitations(res.data);
+      if (version === accountVersion.current) setPendingInvitations(res.data);
     } catch (err) {
-      console.warn('Failed to fetch pending invitations', err);
+      if (version === accountVersion.current) console.warn('Failed to fetch pending invitations', err);
     }
-  };
+  }, []);
 
-  const refreshMembership = async () => {
-    if (!currentOrg) {
-      setCurrentRole(null);
-      setCurrentPermissions([]);
-      return;
-    }
+  const fetchProfileAndOrgs = useCallback(async (signal?: AbortSignal) => {
+    const version = accountVersion.current;
+    const isCurrent = () => version === accountVersion.current && !signal?.aborted;
     try {
-      const res = await apiClient.get<MyMembershipResponse>(`/organizations/${currentOrg.id}/my-membership`);
-      setCurrentRole(res.data.role);
-      setCurrentPermissions(res.data.permissions || []);
-    } catch (err) {
-      console.warn('Failed to fetch my-membership', err);
-      setCurrentRole(null);
-      setCurrentPermissions([]);
-    }
-  };
+      const profileRes = await apiClient.get<User>('/users/me', { signal });
+      if (!isCurrent()) return;
 
-  const refreshWorkspaces = async (targetOrg?: Organization | null) => {
-    const org = targetOrg !== undefined ? targetOrg : currentOrg;
-    if (!org) {
-      setWorkspaces([]);
-      setCurrentWorkspace(null);
-      return;
+      const orgsRes = await apiClient.get<Organization[]>('/organizations', { signal });
+      if (!isCurrent()) return;
+      const orgs = orgsRes.data;
+      const savedOrgId = selectedOrgId.current ?? localStorage.getItem('current_org_id');
+      setUser(profileRes.data);
+      setOrganizations(orgs);
+      selectOrganization(orgs.find((org) => org.id === savedOrgId) ?? orgs[0] ?? null);
+      if (!orgs.length) localStorage.removeItem('current_workspace_id');
+      void refreshPendingInvitations();
+    } catch {
+      if (isCurrent()) logout();
+    } finally {
+      if (isCurrent()) setIsLoading(false);
     }
-    try {
-      const wsRes = await apiClient.get<Workspace[]>(`/organizations/${org.id}/workspaces`);
-      setWorkspaces(wsRes.data);
-      if (wsRes.data.length > 0) {
-        const savedWsId =
-          localStorage.getItem(`current_workspace_id_${org.id}`) ||
-          localStorage.getItem('current_workspace_id');
-        const defaultWs = wsRes.data.find((w) => w.id === savedWsId) || wsRes.data[0];
-        setCurrentWorkspace(defaultWs);
-      } else {
-        setCurrentWorkspace(null);
-        localStorage.removeItem(`current_workspace_id_${org.id}`);
-      }
-    } catch (err) {
-      console.error('Failed to load workspaces', err);
-    }
+  }, [logout, refreshPendingInvitations, selectOrganization]);
+
+  const reloadOrganizationContext = () => {
+    resetOrganizationContext();
+    setContextVersion((version) => version + 1);
   };
 
   const updateUserProfile = async (fullName: string) => {
@@ -175,23 +183,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isOwnerOrAdmin = currentRole?.toUpperCase() === 'OWNER' || currentRole?.toUpperCase() === 'ADMIN';
 
   useEffect(() => {
-    if (token) {
-      fetchProfileAndOrgs();
-    } else {
-      setIsLoading(false);
-    }
-  }, [token]);
+    if (!token) return;
+    const controller = new AbortController();
+    void fetchProfileAndOrgs(controller.signal);
+    return () => controller.abort();
+  }, [token, fetchProfileAndOrgs]);
 
   useEffect(() => {
-    if (currentOrg) {
-      localStorage.setItem('current_org_id', currentOrg.id);
-      refreshWorkspaces(currentOrg);
-      refreshMembership();
-    } else {
-      setCurrentRole(null);
-      setCurrentPermissions([]);
-    }
-  }, [currentOrg]);
+    if (!organizationId) return;
+    const controller = new AbortController();
+    contextRequest.current = controller;
+    const { signal } = controller;
+    const base = `/organizations/${organizationId}`;
+
+    apiClient.get<Workspace[]>(`${base}/workspaces`, { signal })
+      .then(({ data }) => {
+        if (signal.aborted) return;
+        const available = data.filter((workspace) => workspace.organization_id === organizationId);
+        const storedId = localStorage.getItem(`current_workspace_id_${organizationId}`)
+          || localStorage.getItem('current_workspace_id');
+        setWorkspaceList(available);
+        setCurrentWorkspace(available.find((workspace) => workspace.id === storedId) ?? available[0] ?? null);
+        if (!available.length) localStorage.removeItem(`current_workspace_id_${organizationId}`);
+      })
+      .catch((err) => {
+        if (signal.aborted) return;
+        console.error('Failed to load workspaces', err);
+        setWorkspaceError(true);
+      });
+
+    apiClient.get<MyMembershipResponse>(`${base}/my-membership`, { signal })
+      .then(({ data }) => {
+        if (signal.aborted) return;
+        if (data.organization_id !== organizationId) {
+          setMembershipError(true);
+          return;
+        }
+        setMembership(data);
+      })
+      .catch((err) => {
+        if (signal.aborted) return;
+        console.warn('Failed to fetch my-membership', err);
+        setMembershipError(true);
+      });
+
+    return () => controller.abort();
+  }, [organizationId, contextVersion]);
 
   useEffect(() => {
     if (currentWorkspace) {
@@ -201,58 +238,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentWorkspace]);
 
   const login = (newToken: string, refreshToken?: string, newUser?: User | null) => {
+    if (newToken !== token) {
+      accountVersion.current++;
+      setIsLoading(true);
+    }
     localStorage.setItem('access_token', newToken);
-    if (refreshToken) {
-      localStorage.setItem('refresh_token', refreshToken);
-    }
+    if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
     setToken(newToken);
-    if (newUser) {
-      setUser(newUser);
-    }
+    if (newUser) setUser(newUser);
   };
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('current_org_id');
-    localStorage.removeItem('current_workspace_id');
-    const keysToRemove = Object.keys(localStorage).filter((k) => k.startsWith('current_workspace_id_'));
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
-    setToken(null);
-    setUser(null);
-    setOrganizations([]);
-    setCurrentOrg(null);
-    setWorkspaces([]);
-    setCurrentWorkspace(null);
-    setCurrentRole(null);
-    setCurrentPermissions([]);
-    setPendingInvitations([]);
-  };
+  const switchOrganization = (org: Organization) => selectOrganization(org);
 
-  const switchOrganization = (org: Organization) => {
-    setCurrentOrg(org);
-    setCurrentWorkspace(null);
-  };
-
-  const switchWorkspace = (ws: Workspace) => {
-    setCurrentWorkspace(ws);
+  const switchWorkspace = (workspace: Workspace) => {
+    if (workspace.organization_id === selectedOrgId.current) setCurrentWorkspace(workspace);
   };
 
   const createOrganization = async (name: string, slug: string): Promise<Organization> => {
+    const version = accountVersion.current;
     const res = await apiClient.post<Organization>('/organizations', { name, slug });
     const newOrg = res.data;
-    setOrganizations((prev) => [...prev, newOrg]);
-    setCurrentOrg(newOrg);
-    setCurrentWorkspace(null);
+    if (version === accountVersion.current) {
+      setOrganizations((prev) => [...prev, newOrg]);
+      selectOrganization(newOrg);
+    }
     return newOrg;
   };
 
   const createWorkspace = async (name: string, slug: string): Promise<Workspace> => {
     if (!currentOrg) throw new Error('No organization selected');
+    const version = accountVersion.current;
     const res = await apiClient.post<Workspace>(`/organizations/${currentOrg.id}/workspaces`, { name, slug });
     const newWs = res.data;
-    setWorkspaces((prev) => [...prev, newWs]);
-    setCurrentWorkspace(newWs);
+    if (version === accountVersion.current && newWs.organization_id === selectedOrgId.current) {
+      setWorkspaceList((prev) => [...(prev ?? []), newWs]);
+      setCurrentWorkspace(newWs);
+    }
     return newWs;
   };
 
@@ -276,9 +297,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         switchOrganization,
         switchWorkspace,
-        refreshWorkspaces,
+        workspaceStatus,
+        membershipError,
+        reloadOrganizationContext,
         refreshOrganizations: fetchProfileAndOrgs,
-        refreshMembership,
         refreshPendingInvitations,
         updateUserProfile,
         createOrganization,

@@ -3,12 +3,33 @@ export interface SSEEvent {
   data: any;
 }
 
+function parseEvent(block: string): SSEEvent | null {
+  let event = 'message';
+  const dataLines: string[] = [];
+
+  for (const line of block.split('\n')) {
+    const colon = line.indexOf(':');
+    const field = colon === -1 ? line : line.slice(0, colon);
+    const value = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '');
+    if (field === 'event') event = value || 'message';
+    if (field === 'data') dataLines.push(value);
+  }
+
+  if (!dataLines.length && event !== 'done') return null;
+  const raw = dataLines.join('\n');
+  try {
+    return { event, data: JSON.parse(raw) };
+  } catch {
+    return { event, data: raw };
+  }
+}
+
 export async function fetchSSE(
   url: string,
   options: {
     body?: any;
     onEvent: (event: SSEEvent) => void;
-    onError?: (err: any) => void;
+    onError?: (err: Error) => void;
     onDone?: () => void;
     signal?: AbortSignal;
   }
@@ -18,11 +39,11 @@ export async function fetchSSE(
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
   };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  if (token) headers.Authorization = `Bearer ${token}`;
 
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
+    options.signal?.throwIfAborted();
     const response = await fetch(url, {
       method: 'POST',
       headers,
@@ -31,57 +52,56 @@ export async function fetchSSE(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (response.status === 401) throw new Error('登录已过期，请重新登录后再试。');
+      if (response.status === 403) throw new Error('当前账号无权向此会话发送消息。');
+      if (response.status === 429) throw new Error('请求过于频繁，请稍后重试。');
+      throw new Error(`回答服务暂不可用（HTTP ${response.status}）。`);
+    }
+    if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+      throw new Error('回答服务返回了无法识别的数据。');
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('ReadableStream not supported');
+    reader = response.body?.getReader();
+    if (!reader) throw new Error('回答服务没有返回数据。');
 
-    const decoder = new TextDecoder('utf-8');
+    const decoder = new TextDecoder();
     let buffer = '';
-
+    let trailingCR = '';
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      options.signal?.throwIfAborted();
+      let text = trailingCR + decoder.decode(value, { stream: !done });
+      trailingCR = !done && text.endsWith('\r') ? '\r' : '';
+      if (trailingCR) text = text.slice(0, -1);
+      buffer += text.replace(/\r\n?/g, '\n');
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-
-      for (const block of lines) {
-        if (!block.trim()) continue;
-
-        let eventType = 'message';
-        let dataStr = '';
-
-        const blockLines = block.split('\n');
-        for (const line of blockLines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            dataStr = line.slice(6).trim();
-          }
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const event = parseEvent(block);
+        if (!event) continue;
+        if (event.event === 'error') {
+          const message = typeof event.data === 'string' ? event.data : event.data?.message ?? event.data?.detail;
+          throw new Error(typeof message === 'string' && message.trim() ? message : '回答服务发生错误。');
         }
-
-        let parsedData: any = dataStr;
-        try {
-          parsedData = JSON.parse(dataStr);
-        } catch {
-          // Keep as string
-        }
-
-        options.onEvent({ event: eventType, data: parsedData });
-
-        if (eventType === 'done' || dataStr === '[DONE]') {
+        if (event.event === 'done' || event.data === '[DONE]') {
           options.onDone?.();
           return;
         }
+        options.onEvent(event);
+        options.signal?.throwIfAborted();
       }
+      if (done) throw new Error('回答连接提前关闭。');
     }
-    options.onDone?.();
-  } catch (err: any) {
-    if (err.name !== 'AbortError') {
-      options.onError?.(err);
+  } catch (err) {
+    if (!options.signal?.aborted && !(err instanceof Error && err.name === 'AbortError')) {
+      options.onError?.(err instanceof TypeError ? new Error('网络连接中断，请检查连接后再试。')
+        : err instanceof Error ? err : new Error('回答请求失败。'));
+    }
+  } finally {
+    if (reader) {
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
   }
 }

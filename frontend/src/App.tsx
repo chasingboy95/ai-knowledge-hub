@@ -53,7 +53,8 @@ export function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
+            <Route index element={<Navigate to="/chat" replace />} />
+            <Route path="overview" element={<Dashboard />} />
             <Route path="knowledge-bases" element={<KnowledgeBases />} />
             <Route path="knowledge-bases/:id" element={<KnowledgeBaseDetail />} />
             <Route path="chat" element={<Chat />} />

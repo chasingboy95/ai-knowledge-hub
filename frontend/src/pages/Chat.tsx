@@ -1,4 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useOutletContext } from 'react-router-dom';
+import { ChatResources, type ChatKnowledgeBase } from '../components/ChatResources';
+import { getChatSources } from '../utils/chatSources';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import { fetchSSE } from '../api/sse';
@@ -7,18 +11,17 @@ import {
   MessageSquare,
   Plus,
   Trash2,
-  Send,
   Square,
   Bot,
-  User as UserIcon,
   Sparkles,
   Wrench,
   BookOpen,
   ChevronDown,
-  ChevronUp,
   Sliders,
   CheckCircle2,
   Cpu,
+  PanelRight,
+  ArrowUp,
 } from 'lucide-react';
 
 interface ChatSession {
@@ -28,15 +31,6 @@ interface ChatSession {
   title: string;
   created_at: string;
   updated_at: string;
-}
-
-interface CitationSource {
-  document_id: string;
-  document_title: string;
-  chunk_index: number;
-  page_number?: number | null;
-  similarity: number;
-  text_snippet: string;
 }
 
 interface ToolCallState {
@@ -50,37 +44,46 @@ interface Message {
   id?: string;
   role: 'user' | 'assistant';
   content: string;
-  context_citations?: CitationSource[] | null;
+  context_citations?: unknown[] | null;
   toolCalls?: ToolCallState[];
   created_at?: string;
   isStreaming?: boolean;
-}
-
-interface KnowledgeBase {
-  id: string;
-  name: string;
+  interruption?: { message: string; retryable?: boolean };
 }
 
 export const Chat: React.FC = () => {
+  const { currentOrg, currentWorkspace } = useAuth();
+  return <ChatWorkspace key={`${currentOrg?.id}/${currentWorkspace?.id}`} />;
+};
+
+function ChatWorkspace() {
   const { user, currentOrg, currentWorkspace, isOwnerOrAdmin } = useAuth();
+  const { chatNavigation, closeNavigation } = useOutletContext<{
+    chatNavigation: HTMLDivElement | null;
+    closeNavigation: () => void;
+  }>();
+  const workspacePath = currentOrg && currentWorkspace?.organization_id === currentOrg.id
+    ? `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}`
+    : null;
 
   // Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [loadingSessions, setLoadingSessions] = useState(!!workspacePath);
 
   // Messages
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputContent, setInputContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const isStreamingRef = useRef(false);
-  useEffect(() => {
-    isStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+  const [sendError, setSendError] = useState('');
 
   // Config & Knowledge bases
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<ChatKnowledgeBase[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [enableAgent, setEnableAgent] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -88,115 +91,117 @@ export const Chat: React.FC = () => {
   const [minSimilarity, setMinSimilarity] = useState(0.3);
   const [showConfig, setShowConfig] = useState(false);
 
-  // Expanded Citation Snippet index map: `${msgIndex}-${citeIndex}` -> boolean
-  const [expandedCitations, setExpandedCitations] = useState<Record<string, boolean>>({});
+  const [answerIndex, setAnswerIndex] = useState<number | null>(null);
+  const [activeCitation, setActiveCitation] = useState<number | null>(null);
+  const [showSources, setShowSources] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const answer = answerIndex === null ? undefined : messages[answerIndex];
+  const sources = answer ? getChatSources(answer.content, answer.context_citations) : [];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ block: 'nearest' });
   }, [messages]);
 
-  // Load Sessions & Knowledge Bases when workspace changes
   useEffect(() => {
-    if (currentOrg && currentWorkspace) {
-      loadSessions();
-      loadKnowledgeBases();
-    }
-  }, [currentOrg, currentWorkspace]);
+    if (!showSources || activeCitation === null) return;
+    const card = document.getElementById(`chat-source-${activeCitation}`);
+    card?.scrollIntoView({ block: 'nearest' });
+    card?.focus({ preventScroll: true });
+  }, [showSources, resourcesOpen, answerIndex, activeCitation]);
 
-  // Load Messages when session changes
   useEffect(() => {
-    if (currentOrg && currentWorkspace && currentSessionId) {
-      if (!isStreamingRef.current) {
-        loadMessages(currentSessionId);
-      }
-    } else {
-      setMessages([]);
-    }
-  }, [currentSessionId]);
+    if (!workspacePath) return;
+    const controller = new AbortController();
+    apiClient.get<ChatSession[]>(`${workspacePath}/chat/sessions`, { signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        setSessions((prev) => {
+          const loadedIds = new Set(data.map((session) => session.id));
+          return [...prev.filter((session) => !loadedIds.has(session.id)), ...data];
+        });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error('Failed to load chat sessions', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingSessions(false);
+      });
+    apiClient.get<ChatKnowledgeBase[]>(`${workspacePath}/knowledge-bases`, { signal: controller.signal })
+      .then(({ data }) => setKnowledgeBases(data))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error('Failed to load knowledge bases', err);
+      });
 
-  const loadSessions = async () => {
-    if (!currentOrg || !currentWorkspace) return;
-    setLoadingSessions(true);
-    try {
-      const res = await apiClient.get<ChatSession[]>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`
-      );
-      setSessions(res.data);
-      if (res.data.length > 0 && !currentSessionId) {
-        setCurrentSessionId(res.data[0].id);
-      }
-    } catch (err) {
-      console.error('Failed to load chat sessions', err);
-    } finally {
-      setLoadingSessions(false);
-    }
+    return () => {
+      controller.abort();
+      requestRef.current?.abort();
+    };
+  }, [workspacePath]);
+
+  useEffect(() => {
+    if (!workspacePath || !currentSessionId || requestRef.current) return;
+    const controller = new AbortController();
+
+    apiClient.get<Message[]>(`${workspacePath}/chat/sessions/${currentSessionId}/messages`, { signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        setMessages(data);
+        const lastAnswer = data.findLastIndex((message) => message.role === 'assistant');
+        if (lastAnswer >= 0) {
+          setAnswerIndex(lastAnswer);
+          setShowSources(true);
+        }
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setSessionError(err.response?.status === 403 ? '您无权查阅此对话。' : '无法加载对话，请切换会话后重试。');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingMessages(false);
+      });
+
+    return () => controller.abort();
+  }, [workspacePath, currentSessionId]);
+
+  const selectSession = (sessionId: string | null) => {
+    if (requestRef.current || sessionId === currentSessionId) return;
+    setCurrentSessionId(sessionId);
+    setLoadingMessages(sessionId !== null);
+    setSessionError('');
+    setSendError('');
+    setMessages([]);
+    setAnswerIndex(null);
+    setActiveCitation(null);
+    setShowSources(false);
+    setResourcesOpen(false);
   };
 
-  const loadKnowledgeBases = async () => {
-    if (!currentOrg || !currentWorkspace) return;
-    try {
-      const res = await apiClient.get<KnowledgeBase[]>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases`
-      );
-      setKnowledgeBases(res.data);
-    } catch (err) {
-      console.error('Failed to load knowledge bases', err);
-    }
-  };
-
-  const loadMessages = async (sessionId: string) => {
-    if (!currentOrg || !currentWorkspace) return;
-    try {
-      const res = await apiClient.get<Message[]>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}/messages`
-      );
-      setMessages(res.data);
-    } catch (err: any) {
-      console.error('Failed to load messages', err);
-      if (err.response?.status === 403) {
-        setMessages([
-          {
-            role: 'assistant',
-            content: '⚠️ 该对话属于其他成员的私有会话，您无权查阅其历史记录。',
-          },
-        ]);
-      }
-    }
-  };
-
-  const handleCreateSession = async () => {
-    if (!currentOrg || !currentWorkspace) return;
-    try {
-      const res = await apiClient.post<ChatSession>(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
-        { title: "新建对话" }
-      );
-      setSessions([res.data, ...sessions]);
-      setCurrentSessionId(res.data.id);
-    } catch (err) {
-      console.error('Failed to create session', err);
+  const showCitation = (messageIndex: number, citationNumber: number) => {
+    setAnswerIndex(messageIndex);
+    setActiveCitation(citationNumber);
+    setShowSources(true);
+    setResourcesOpen(true);
+    const card = document.getElementById(`chat-source-${citationNumber}`);
+    if (showSources && answerIndex === messageIndex) {
+      card?.scrollIntoView({ block: 'nearest' });
+      card?.focus({ preventScroll: true });
     }
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    if (!currentOrg || !currentWorkspace) return;
+    if (!workspacePath || requestRef.current) return;
     if (!window.confirm('确定要删除该对话会话及所有历史记录吗？')) return;
 
     try {
       await apiClient.delete(
-        `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${sessionId}`
+        `${workspacePath}/chat/sessions/${sessionId}`
       );
-      const updated = sessions.filter((s) => s.id !== sessionId);
-      setSessions(updated);
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       if (currentSessionId === sessionId) {
-        setCurrentSessionId(updated.length > 0 ? updated[0].id : null);
+        selectSession(null);
       }
     } catch (err) {
       console.error('Failed to delete session', err);
@@ -205,26 +210,35 @@ export const Chat: React.FC = () => {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputContent.trim() || isStreaming || !currentOrg || !currentWorkspace) return;
+    const userText = inputContent.trim();
+    if (!userText || requestRef.current || loadingMessages || sessionError || !workspacePath) return;
 
+    setSendError('');
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setIsStreaming(true);
     let targetSessionId = currentSessionId;
     if (!targetSessionId) {
-      // Create session automatically if none exists
       try {
-        const newSessionRes = await apiClient.post<ChatSession>(
-          `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions`,
-          { title: inputContent.slice(0, 30) }
+        const { data } = await apiClient.post<ChatSession>(
+          `${workspacePath}/chat/sessions`,
+          { title: userText.slice(0, 30) },
+          { signal: controller.signal },
         );
-        targetSessionId = newSessionRes.data.id;
-        setSessions([newSessionRes.data, ...sessions]);
+        if (controller.signal.aborted) return;
+        targetSessionId = data.id;
+        setSessions((prev) => [data, ...prev]);
         setCurrentSessionId(targetSessionId);
       } catch {
-        alert('无法创建对话会话');
+        if (controller.signal.aborted) return;
+        requestRef.current = null;
+        setIsStreaming(false);
+        setSendError('无法创建对话，问题已保留。请重新发送。');
         return;
       }
     }
 
-    const userText = inputContent.trim();
+    const responseIndex = messages.length + 1;
     setInputContent('');
 
     // Add user message to UI
@@ -239,12 +253,7 @@ export const Chat: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsgPlaceholder]);
-    setIsStreaming(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const streamUrl = `/api/v1/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/chat/sessions/${targetSessionId}/stream`;
+    const streamUrl = `/api/v1${workspacePath}/chat/sessions/${targetSessionId}/stream`;
 
     const payload = {
       content: userText,
@@ -256,27 +265,25 @@ export const Chat: React.FC = () => {
     };
 
     let accumulatedTokens = '';
-    let citations: CitationSource[] = [];
+    let citations: unknown[] = [];
     const activeToolCalls: ToolCallState[] = [];
+    const interruptAnswer = (message: string) => {
+      if (controller.signal.aborted) return;
+      setMessages((prev) => prev.map((item, index) =>
+        index === responseIndex && item.isStreaming
+          ? { ...item, isStreaming: false, interruption: { message, retryable: true } }
+          : item,
+      ));
+    };
 
     await fetchSSE(streamUrl, {
       body: payload,
       signal: controller.signal,
       onEvent: (event) => {
+        if (controller.signal.aborted) return;
         if (event.event === 'context') {
-          if (Array.isArray(event.data)) {
-            citations = event.data;
-          } else if (event.data?.citations && Array.isArray(event.data.citations)) {
-            citations = event.data.citations;
-          }
-          setMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant') {
-              last.context_citations = citations;
-            }
-            return next;
-          });
+          const incoming = Array.isArray(event.data) ? event.data : event.data?.citations;
+          if (Array.isArray(incoming)) citations = incoming;
         } else if (event.event === 'token') {
           const tokenStr =
             typeof event.data === 'string'
@@ -286,11 +293,12 @@ export const Chat: React.FC = () => {
               : '';
           if (tokenStr) {
             accumulatedTokens += tokenStr;
+            const content = accumulatedTokens;
             setMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
               if (last && last.role === 'assistant') {
-                last.content = accumulatedTokens;
+                next[next.length - 1] = { ...last, content };
               }
               return next;
             });
@@ -308,7 +316,7 @@ export const Chat: React.FC = () => {
             const next = [...prev];
             const last = next[next.length - 1];
             if (last && last.role === 'assistant') {
-              last.toolCalls = [...activeToolCalls];
+              next[next.length - 1] = { ...last, toolCalls: [...activeToolCalls] };
             }
             return next;
           });
@@ -320,7 +328,7 @@ export const Chat: React.FC = () => {
             (t) => (callId && t.id === callId) || (t.tool === toolName && !t.result)
           );
           if (match) {
-            match.result = toolOutput;
+            activeToolCalls[activeToolCalls.indexOf(match)] = { ...match, result: toolOutput };
           } else {
             activeToolCalls.push({
               id: callId,
@@ -333,192 +341,140 @@ export const Chat: React.FC = () => {
             const next = [...prev];
             const last = next[next.length - 1];
             if (last && last.role === 'assistant') {
-              last.toolCalls = [...activeToolCalls];
+              next[next.length - 1] = { ...last, toolCalls: [...activeToolCalls] };
             }
             return next;
           });
         } else if (event.event === 'message') {
           // Final assistant message persisted from backend
-          if (event.data?.content) {
+          if (event.data?.role && event.data.role !== 'assistant') return;
+          if (typeof event.data?.content !== 'string' && !event.data?.id) return;
+          if (typeof event.data?.content === 'string') {
             accumulatedTokens = event.data.content;
           }
           if (event.data?.context_citations && Array.isArray(event.data.context_citations)) {
             citations = event.data.context_citations;
           }
+          const finalContent = accumulatedTokens;
+          const finalCitations = citations;
           setMessages((prev) => {
             const next = [...prev];
             const last = next[next.length - 1];
             if (last && last.role === 'assistant') {
-              last.id = event.data?.id || last.id;
-              last.content = accumulatedTokens;
-              last.context_citations = citations;
-              last.isStreaming = false;
+              next[next.length - 1] = {
+                ...last,
+                id: event.data?.id || last.id,
+                content: finalContent,
+                context_citations: finalCitations,
+                isStreaming: false,
+              };
             }
             return next;
           });
+          setAnswerIndex(responseIndex);
+          setActiveCitation(null);
+          setShowSources(true);
+          if (!enableAgent) {
+            setSessions((prev) => prev.map((session) =>
+              session.id === targetSessionId && session.title === '新建对话'
+                ? { ...session, title: userText.slice(0, 30) }
+                : session,
+            ));
+          }
         }
       },
-      onError: (err) => {
-        console.error('SSE Stream Error', err);
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant') {
-            last.content = last.content
-              ? `${last.content}\n\n[回答异常中断: ${err.message || '网络连接错误'}]`
-              : `[回答异常: ${err.message || '请求失败'}]`;
-            last.isStreaming = false;
-          }
-          return next;
-        });
-        setIsStreaming(false);
-      },
-      onDone: () => {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant') {
-            if (accumulatedTokens && !last.content) {
-              last.content = accumulatedTokens;
-            }
-            last.isStreaming = false;
-          }
-          return next;
-        });
-        setIsStreaming(false);
-        loadSessions();
-      },
+      onError: (err) => interruptAnswer(err.message),
+      onDone: () => interruptAnswer('回答结束，但服务未返回完整内容。'),
     });
-  };
-
-  const handleStopStream = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (requestRef.current === controller) {
+      requestRef.current = null;
       setIsStreaming(false);
-      setMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last && last.role === 'assistant') {
-          last.isStreaming = false;
-        }
-        return next;
-      });
     }
   };
 
-  const toggleCitationExpand = (key: string) => {
-    setExpandedCitations((prev) => ({ ...prev, [key]: !prev[key] }));
+  const handleStopStream = () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setIsStreaming(false);
+    setMessages((prev) => prev.map((message, index) =>
+      index === prev.length - 1 && message.isStreaming
+        ? { ...message, isStreaming: false, interruption: { message: '已停止回答。' } }
+        : message,
+    ));
   };
 
   return (
-    <div className="flex h-full overflow-hidden bg-slate-50">
-      {/* Session Drawer / Sidebar */}
-      <div className="w-72 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-            <MessageSquare className="w-4 h-4 text-orange-600" />
-            <span>历史会话</span>
-            {isOwnerOrAdmin && (
-              <span className="text-[10px] bg-slate-100 text-slate-500 font-normal px-1.5 py-0.5 rounded" title="管理员可见当前工作区全员会话">
-                全员视图
-              </span>
-            )}
-          </div>
-          <button
-            onClick={handleCreateSession}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 rounded-lg text-xs font-semibold transition"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            新会话
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
+      {chatNavigation && createPortal(
+        <section className="space-y-2 border-t border-neutral-200 p-3">
+          <button type="button" disabled={isStreaming || !workspacePath} onClick={() => {
+            selectSession(null);
+            closeNavigation();
+            inputRef.current?.focus();
+          }} className="flex w-full items-center gap-2 rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold hover:bg-neutral-50 disabled:opacity-50">
+            <Plus className="size-4" /> 新建对话
           </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {loadingSessions ? (
-            <div className="p-4 text-center text-xs text-slate-400">加载会话中...</div>
-          ) : sessions.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">暂无个人会话，点击右上角新建</div>
-          ) : (
-            sessions.map((s) => {
-              const isSelected = s.id === currentSessionId;
-              return (
-                <div
-                  key={s.id}
-                  onClick={() => setCurrentSessionId(s.id)}
-                  className={`group flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer transition ${
-                    isSelected
-                      ? 'bg-orange-500/10 text-orange-950 font-medium border border-orange-200'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="truncate flex-1 pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <p className="truncate font-medium">{s.title}</p>
-                      {isOwnerOrAdmin && s.user_id && s.user_id !== user?.id && (
-                        <span className="text-[9px] bg-slate-200 text-slate-600 px-1 py-0.2 rounded shrink-0">
-                          成员
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-slate-400">
-                      {new Date(s.updated_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <button
-                    onClick={(e) => handleDeleteSession(e, s.id)}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition p-1"
-                    title="删除会话"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
+          <button type="button" aria-expanded={showHistory} onClick={() => setShowHistory(!showHistory)}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-100">
+            <MessageSquare className="size-4" />
+            <span className="flex-1 text-left">会话历史</span>
+            <ChevronDown className={`size-4 ${showHistory ? 'rotate-180' : ''}`} />
+          </button>
+          {showHistory && (
+            <div className="space-y-1">
+              {isOwnerOrAdmin && <p className="px-3 text-xs text-neutral-600">包含成员会话</p>}
+              {loadingSessions ? <p className="px-3 py-2 text-xs text-neutral-600">正在加载会话…</p>
+                : sessions.length === 0 && <p className="px-3 py-2 text-xs text-neutral-600">暂无会话</p>}
+              {sessions.map((session) => (
+                <div key={session.id} className={`flex items-center rounded-lg ${session.id === currentSessionId ? 'bg-indigo-50 text-indigo-800' : 'hover:bg-neutral-100'}`}>
+                  <button type="button" aria-current={session.id === currentSessionId} disabled={isStreaming} onClick={() => {
+                    selectSession(session.id);
+                    closeNavigation();
+                  }} className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm disabled:opacity-60">
+                    {session.title}
+                    {isOwnerOrAdmin && session.user_id && session.user_id !== user?.id && <span className="ml-1.5 text-xs text-neutral-600">成员</span>}
+                  </button>
+                  <button type="button" disabled={isStreaming} onClick={(e) => handleDeleteSession(e, session.id)} title="删除会话"
+                    className="mr-1 rounded p-2 text-neutral-500 hover:text-red-700 disabled:opacity-50">
+                    <Trash2 className="size-3.5" />
                   </button>
                 </div>
-              );
-            })
+              ))}
+            </div>
           )}
-        </div>
-      </div>
+        </section>,
+        chatNavigation,
+      )}
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-50">
-        {/* Top Control Bar */}
-        <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-bold text-slate-800 text-sm">
-              {sessions.find((s) => s.id === currentSessionId)?.title || '智能问答助手'}
-            </span>
-            {enableAgent ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700 border border-purple-200 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-purple-600" />
-                Agent 增强模式已开启
-              </span>
-            ) : (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
-                标准精准 RAG 模式
-              </span>
-            )}
+      <section aria-label="AI 问答" className="flex min-w-0 flex-1 flex-col">
+        <header className="flex min-h-15 shrink-0 items-center justify-between gap-2 border-b border-neutral-200 px-4 sm:px-6">
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold">{sessions.find((session) => session.id === currentSessionId)?.title || '新建对话'}</h1>
+            {currentWorkspace && <p className="truncate text-xs text-neutral-600">{currentWorkspace.name}</p>}
           </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
-                showConfig
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              检索与模型参数
+          <div className="flex shrink-0 items-center gap-2">
+            {enableAgent && <span className="hidden text-xs font-medium text-indigo-700 sm:inline">Agent</span>}
+            <button type="button" aria-expanded={showConfig} aria-label="检索与模型参数"
+              onClick={() => setShowConfig(!showConfig)} className="rounded-lg border border-neutral-200 p-2 text-neutral-700 hover:bg-neutral-100">
+              <Sliders className="size-4" />
+            </button>
+            <button type="button" aria-expanded={resourcesOpen} aria-controls="chat-resources"
+              onClick={() => setResourcesOpen(!resourcesOpen)}
+              className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-2 text-xs font-medium hover:bg-neutral-100 lg:hidden">
+              <PanelRight className="size-4" /> {showSources ? `来源 (${sources.length})` : '资料'}
             </button>
           </div>
-        </div>
+        </header>
+        <span className="sr-only" role="status">
+          {answer && `回答来源 ${sources.length} 条`}
+        </span>
 
         {/* Config Dropdown Drawer */}
         {showConfig && (
-          <div className="bg-slate-900 text-slate-200 border-b border-slate-800 px-6 py-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-xs animate-in slide-in-from-top-2">
+          <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-neutral-200 bg-neutral-50 px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
             <div className="space-y-3">
               <div>
-                <label className="font-semibold block mb-1.5 text-slate-300 flex items-center gap-1.5">
+                <label className="font-semibold block mb-1.5 text-neutral-700 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-purple-400" />
                   自主 Agent 工具调用 (Multi-turn ReAct)
                 </label>
@@ -530,15 +486,15 @@ export const Chat: React.FC = () => {
                     onChange={(e) => setEnableAgent(e.target.checked)}
                     className="rounded text-purple-600 focus:ring-purple-500"
                   />
-                  <label htmlFor="enable-agent-check" className="text-slate-300 cursor-pointer">
+                  <label htmlFor="enable-agent-check" className="text-neutral-700 cursor-pointer">
                     允许模型自主调度多步检索与工单提交工具
                   </label>
                 </div>
               </div>
 
               <div>
-                <label className="font-semibold block mb-1 text-slate-300 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                <label className="font-semibold block mb-1 text-neutral-700 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-indigo-700" />
                   切换运行模型 (Model)
                 </label>
                 <div className="flex gap-2">
@@ -551,7 +507,7 @@ export const Chat: React.FC = () => {
                         setSelectedModel('qwen2.5:1.5b');
                       }
                     }}
-                    className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                    className="bg-white border border-neutral-300 rounded px-2.5 py-1.5 text-neutral-800 text-xs focus:outline-none focus:border-blue-500"
                   >
                     <option value="">默认 (环境变量配置)</option>
                     <option value="qwen2.5:1.5b">qwen2.5:1.5b (本地极速测试)</option>
@@ -568,34 +524,11 @@ export const Chat: React.FC = () => {
                       value={selectedModel}
                       onChange={(e) => setSelectedModel(e.target.value)}
                       placeholder="如: llama3.2:1b"
-                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                      className="flex-1 bg-white border border-neutral-300 rounded px-2 py-1 text-neutral-800 text-xs focus:outline-none focus:border-blue-500"
                     />
                   )}
                 </div>
               </div>
-            </div>
-
-            <div>
-              <label className="font-semibold block mb-1.5 text-slate-300 flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-orange-400" />
-                指定关联知识库
-              </label>
-              <select
-                multiple
-                value={selectedKbIds}
-                onChange={(e) => {
-                  const opts = Array.from(e.target.selectedOptions, (option) => option.value);
-                  setSelectedKbIds(opts);
-                }}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md p-1.5 text-slate-200 text-xs focus:outline-none focus:border-orange-500"
-              >
-                {knowledgeBases.map((kb) => (
-                  <option key={kb.id} value={kb.id}>
-                    {kb.name}
-                  </option>
-                ))}
-              </select>
-              <span className="text-[10px] text-slate-400 mt-1 block">按住 Ctrl/Cmd 可多选，默认检索当前工作区全部库</span>
             </div>
 
             <div className="space-y-3">
@@ -609,7 +542,7 @@ export const Chat: React.FC = () => {
                   max="15"
                   value={topK}
                   onChange={(e) => setTopK(Number(e.target.value))}
-                  className="w-full accent-orange-500"
+                  className="w-full accent-indigo-600"
                 />
               </div>
 
@@ -624,44 +557,45 @@ export const Chat: React.FC = () => {
                   step="0.05"
                   value={minSimilarity}
                   onChange={(e) => setMinSimilarity(Number(e.target.value))}
-                  className="w-full accent-orange-500"
+                  className="w-full accent-indigo-600"
                 />
               </div>
             </div>
           </div>
         )}
 
-        {/* Message Stream Display Area */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-orange-100 flex items-center justify-center text-orange-600 shadow-sm">
-                <Bot className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-bold text-slate-800">开始企业知识库安全交互</h2>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                输入您的业务问题。底层已具备跨租户绝对安全隔离、上下文注入防范、严苛余弦向量相似度召回以及多步 Agent 工具调用能力。
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+          <div className="mx-auto max-w-3xl space-y-6">
+          {loadingMessages || sessionError ? (
+            <p role="status" className="text-sm text-neutral-600">{sessionError || '正在加载对话…'}</p>
+          ) : messages.length === 0 ? (
+            <div className="pt-8 sm:pt-16">
+              <span className="mb-5 inline-flex rounded-2xl bg-indigo-50 p-3 text-indigo-700"><Sparkles className="size-6" /></span>
+              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">今天想了解什么？</h2>
+              <p className="mt-3 max-w-md text-sm leading-relaxed text-neutral-600">
+                {workspacePath ? '向工作区的知识库提问，查看相关文档和引用片段。' : '选择一个工作区后，即可开始提问。'}
               </p>
             </div>
           ) : (
             messages.map((msg, msgIdx) => {
               const isUser = msg.role === 'user';
+              const messageSources = isUser ? [] : getChatSources(msg.content, msg.context_citations);
               return (
                 <div
                   key={msg.id || msgIdx}
                   className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   {!isUser && (
-                    <div className="w-9 h-9 rounded-xl bg-orange-600 flex items-center justify-center text-white flex-shrink-0 shadow-sm">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-700 shrink-0">
                       <Bot className="w-5 h-5" />
                     </div>
                   )}
 
                   <div
-                    className={`max-w-2xl space-y-3 ${
+                    className={`min-w-0 max-w-full space-y-3 wrap-break-word ${
                       isUser
-                        ? 'bg-slate-900 text-white rounded-2xl rounded-tr-sm px-4 py-3 shadow-xs'
-                        : 'bg-white border border-slate-200/80 rounded-2xl rounded-tl-sm px-5 py-4 text-slate-800 shadow-xs'
+                        ? 'bg-neutral-100 text-neutral-900 rounded-2xl px-4 py-3'
+                        : 'flex-1 py-1 text-neutral-800'
                     }`}
                   >
                     {/* Tool Calls Accordion in Agent mode */}
@@ -707,119 +641,130 @@ export const Chat: React.FC = () => {
 
                     {/* Message Body with Markdown formatting */}
                     {msg.content ? (
-                      <MarkdownView content={msg.content} isUser={isUser} />
+                      <MarkdownView
+                        content={msg.content}
+                        citationNumbers={new Set(messageSources.map(({ number }) => number))}
+                        onCitationClick={isUser ? undefined : (number) => showCitation(msgIdx, number)}
+                      />
                     ) : (
                       <div className="text-sm text-slate-400 italic">
                         {msg.isStreaming ? '正在思考中...' : ''}
                       </div>
                     )}
+                    {msg.interruption && (
+                      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
+                        <p role="status">{msg.interruption.message}</p>
+                        {msg.interruption.retryable && messages[msgIdx - 1]?.role === 'user' && (
+                          <button
+                            type="button"
+                            disabled={!!inputContent || isStreaming}
+                            onClick={() => {
+                              setInputContent(messages[msgIdx - 1].content);
+                              inputRef.current?.focus();
+                            }}
+                            className="mt-1 text-xs font-medium text-indigo-700 hover:underline disabled:text-neutral-500"
+                          >
+                            将问题放回输入框
+                          </button>
+                        )}
+                      </div>
+                    )}
 
-                    {/* Citations Badges & Drawer */}
-                    {!isUser && msg.context_citations && msg.context_citations.length > 0 && (
-                      <div className="pt-1 space-y-1.5">
-                        <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
-                          <BookOpen className="w-3 h-3 text-orange-500" />
-                          <span>精准引用证据源 ({msg.context_citations.length} 处):</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {msg.context_citations.map((cite, cIdx) => {
-                            const expandKey = `${msgIdx}-${cIdx}`;
-                            const isExpanded = !!expandedCitations[expandKey];
-
-                            return (
-                              <div
-                                key={cIdx}
-                                className="border border-slate-200 bg-white rounded-lg p-2 text-xs shadow-2xs max-w-sm space-y-1"
-                              >
-                                <div
-                                  onClick={() => toggleCitationExpand(expandKey)}
-                                  className="flex items-center justify-between gap-3 cursor-pointer hover:text-orange-600"
-                                >
-                                  <span className="font-semibold text-slate-800 truncate flex-1">
-                                    [{cIdx + 1}] {cite.document_title}
-                                  </span>
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-50 text-orange-700 font-mono font-bold flex-shrink-0">
-                                    {(cite.similarity * 100).toFixed(0)}% 相似度
-                                  </span>
-                                  {isExpanded ? (
-                                    <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-                                  ) : (
-                                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                                  )}
-                                </div>
-
-                                {isExpanded && (
-                                  <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-600 bg-slate-50 p-2 rounded">
-                                    <p className="line-clamp-6 leading-relaxed italic font-serif">
-                                      &ldquo;{cite.text_snippet}&rdquo;
-                                    </p>
-                                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
-                                      <span>Chunk #{cite.chunk_index}</span>
-                                      {cite.page_number && <span>页码: {cite.page_number}</span>}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                    {messageSources.length > 0 && (
+                      <div className="flex flex-wrap gap-2 pt-1.5">
+                        {messageSources.map(({ number, source }) => (
+                          <button type="button" key={number} onClick={() => showCitation(msgIdx, number)}
+                            className="max-w-full truncate rounded-full border border-neutral-200 px-2.5 py-1 text-xs text-neutral-700 hover:border-indigo-300 hover:text-indigo-700">
+                            [{number}] {source.document_title}
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
-
-                  {isUser && (
-                    <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center text-white flex-shrink-0 shadow-sm">
-                      <UserIcon className="w-5 h-5" />
-                    </div>
-                  )}
                 </div>
               );
             })
           )}
           <div ref={messagesEndRef} />
+          </div>
         </div>
 
-        {/* Input Box */}
-        <div className="bg-white border-t border-slate-200 p-4">
-          <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto flex gap-3">
+        <div className="shrink-0 px-4 pb-5 pt-2 sm:px-8">
+          {sendError && <p role="alert" className="mx-auto mb-2 max-w-3xl text-sm text-red-700">{sendError}</p>}
+          <form onSubmit={handleSendMessage} className="mx-auto max-w-3xl rounded-2xl border border-neutral-300 bg-white p-3 shadow-xs focus-within:border-indigo-400">
             <textarea
+              aria-label="输入问题"
+              ref={inputRef}
               rows={2}
               value={inputContent}
               onChange={(e) => setInputContent(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
-              placeholder="向知识库提问，或指示自主 Agent 完成多步检索（Enter 发送，Shift+Enter 换行）..."
-              className="flex-1 p-3 text-sm border border-slate-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              placeholder="向知识库提问…"
+              className="block w-full resize-none px-1 py-1.5 text-sm leading-relaxed outline-none"
             />
-
-            <div className="flex flex-col justify-end">
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <details className="relative min-w-0">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100">
+                  <BookOpen className="size-4 shrink-0" />
+                  <span className="truncate">
+                    {enableAgent ? 'Agent 自动检索' : selectedKbIds.length === 0 ? '全部知识库'
+                      : selectedKbIds.length === 1 ? knowledgeBases.find((kb) => kb.id === selectedKbIds[0])?.name
+                      : `已选 ${selectedKbIds.length} 个知识库`}
+                  </span>
+                  <ChevronDown className="size-3 shrink-0" />
+                </summary>
+                <div className="absolute bottom-full left-0 z-10 mb-2 max-h-52 w-60 max-w-[75vw] space-y-2 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-lg">
+                  {enableAgent ? <p className="text-neutral-600">Agent 模式由模型选择检索范围。</p> : (
+                    <>
+                      <button type="button" onClick={() => setSelectedKbIds([])}
+                        className="text-left font-medium text-indigo-700 hover:underline">检索全部知识库</button>
+                      {knowledgeBases.map((kb) => (
+                        <label key={kb.id} className="flex items-start gap-2">
+                          <input type="checkbox" checked={selectedKbIds.includes(kb.id)}
+                            onChange={(e) => setSelectedKbIds((ids) => e.target.checked ? [...ids, kb.id] : ids.filter((id) => id !== kb.id))}
+                            className="accent-indigo-600" />
+                          <span className="min-w-0 wrap-break-word">{kb.name}</span>
+                        </label>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </details>
               {isStreaming ? (
-                <button
-                  type="button"
-                  onClick={handleStopStream}
-                  className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm transition"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  停止
+                <button type="button" aria-label="停止回答" onClick={handleStopStream}
+                  className="rounded-xl bg-neutral-900 p-2.5 text-white hover:bg-neutral-700">
+                  <Square className="size-4 fill-current" />
                 </button>
               ) : (
-                <button
-                  type="submit"
-                  disabled={!inputContent.trim()}
-                  className="px-5 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Send className="w-4 h-4" />
-                  发送
+                <button type="submit" aria-label="发送问题" disabled={!inputContent.trim() || !workspacePath || loadingMessages || !!sessionError}
+                  className="rounded-xl bg-indigo-700 p-2.5 text-white hover:bg-indigo-800 disabled:bg-neutral-200 disabled:text-neutral-600">
+                  <ArrowUp className="size-4" />
                 </button>
               )}
             </div>
           </form>
         </div>
-      </div>
+      </section>
+      <ChatResources
+        open={resourcesOpen}
+        showSources={showSources}
+        hasAnswer={!!answer}
+        sources={sources}
+        activeCitation={activeCitation}
+        knowledgeBases={knowledgeBases}
+        onClose={() => setResourcesOpen(false)}
+        onTabChange={setShowSources}
+        onExample={(question) => {
+          setInputContent(question);
+          setResourcesOpen(false);
+          inputRef.current?.focus();
+        }}
+      />
     </div>
   );
-};
+}

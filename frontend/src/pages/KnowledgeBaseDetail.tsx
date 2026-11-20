@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
@@ -10,6 +10,7 @@ import {
   Trash2,
   ArrowLeft,
   CheckCircle,
+  Clock,
   AlertTriangle,
   Layers,
   X,
@@ -24,8 +25,10 @@ export interface DocumentItem {
   file_size: number;
   mime_type: string;
   status: string;
+  error_message: string | null;
   chunk_count: number;
   created_at: string;
+  updated_at: string;
 }
 
 export interface DocumentChunk {
@@ -42,10 +45,42 @@ interface UploadProgress {
   currentName: string;
 }
 
+const statusFilters = [
+  { value: 'all', label: '全部' },
+  { value: 'pending', label: '待处理' },
+  { value: 'processing', label: '处理中' },
+  { value: 'failed', label: '处理失败' },
+  { value: 'ready', label: '就绪' },
+] as const;
+
+type StatusFilter = (typeof statusFilters)[number]['value'];
+
+const getStatusGroup = (status: string): Exclude<StatusFilter, 'all'> => {
+  switch (status) {
+    case 'UPLOADED': return 'pending';
+    case 'FAILED': return 'failed';
+    case 'READY': return 'ready';
+    default: return 'processing';
+  }
+};
+
+const processingLabels: Record<string, string> = {
+  PARSING: '解析中',
+  CHUNKING: '切块中',
+  EMBEDDING: '生成向量中',
+};
+
+interface ReindexRequest {
+  previousUpdatedAt: string;
+  queuedAt?: number;
+}
+
 export const KnowledgeBaseDetail: React.FC = () => {
   const { id: kbId } = useParams<{ id: string }>();
   const { currentOrg, currentWorkspace, hasPermission } = useAuth();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [reindexRequests, setReindexRequests] = useState(new Map<string, ReindexRequest>());
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -59,9 +94,8 @@ export const KnowledgeBaseDetail: React.FC = () => {
 
   const canUpload = hasPermission('document:upload');
   const canDelete = hasPermission('document:delete');
-  const canReindex = hasPermission('knowledge:update');
 
-  const fetchDocs = async (silent: boolean = false) => {
+  const fetchDocs = useCallback(async (silent = false) => {
     if (!currentOrg || !currentWorkspace || !kbId) return;
     if (!silent) setLoading(true);
     setIsRefreshing(true);
@@ -70,35 +104,44 @@ export const KnowledgeBaseDetail: React.FC = () => {
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents`
       );
       setDocuments(res.data);
+      setReindexRequests((requests) => {
+        if (!requests.size) return requests;
+        const now = Date.now();
+        const current = new Map(requests);
+        for (const doc of res.data) {
+          const request = current.get(doc.id);
+          if (request?.queuedAt && (doc.updated_at !== request.previousUpdatedAt || now - request.queuedAt >= 10_000)) {
+            current.delete(doc.id);
+          }
+        }
+        return current.size === requests.size ? requests : current;
+      });
     } catch (err) {
       console.error('Failed to load documents', err);
     } finally {
       if (!silent) setLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, [currentOrg, currentWorkspace, kbId]);
 
   useEffect(() => {
     fetchDocs();
-  }, [currentOrg, currentWorkspace, kbId]);
+  }, [fetchDocs]);
 
-  // Check if any document is currently being parsed or indexed
-  const hasProcessingDocs = documents.some(
-    (d) => d.status !== 'READY' && d.status !== 'FAILED'
-  );
+  const documentRows = documents.map((doc) => {
+    const status = reindexRequests.get(doc.id)?.queuedAt ? 'UPLOADED' : doc.status;
+    return { doc, status, group: getStatusGroup(status) };
+  });
+  const statusCounts = { all: documents.length, pending: 0, processing: 0, failed: 0, ready: 0 };
+  for (const { group } of documentRows) statusCounts[group]++;
+  const visibleRows = statusFilter === 'all' ? documentRows : documentRows.filter(({ group }) => group === statusFilter);
+  const hasProcessingDocs = statusCounts.pending > 0 || statusCounts.processing > 0;
 
-  // Auto-refresh polling loop: polls every 2.5s whenever there are active processing documents or ongoing upload
   useEffect(() => {
-    let timer: any = null;
-    if (hasProcessingDocs || uploading) {
-      timer = setInterval(() => {
-        fetchDocs(true);
-      }, 2500);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [hasProcessingDocs, uploading, currentOrg, currentWorkspace, kbId]);
+    if (!hasProcessingDocs && !uploading) return;
+    const timer = setInterval(() => fetchDocs(true), 2500);
+    return () => clearInterval(timer);
+  }, [fetchDocs, hasProcessingDocs, uploading]);
 
   const uploadFiles = async (fileList: File[] | FileList) => {
     if (!canUpload) {
@@ -210,16 +253,26 @@ export const KnowledgeBaseDetail: React.FC = () => {
     }
   };
 
-  const handleReindex = async (docId: string) => {
-    if (!canReindex) return;
+  const handleReindex = async ({ id: docId, updated_at }: DocumentItem) => {
+    if (!canUpload || reindexRequests.has(docId)) return;
     if (!currentOrg || !currentWorkspace || !kbId) return;
+    const request: ReindexRequest = { previousUpdatedAt: updated_at };
+    setReindexRequests((requests) => new Map(requests).set(docId, request));
     try {
       await apiClient.post(
         `/organizations/${currentOrg.id}/workspaces/${currentWorkspace.id}/knowledge-bases/${kbId}/documents/${docId}/reindex`
       );
-      fetchDocs(true);
+      // The endpoint returns before the background job updates the document status.
+      setReindexRequests((requests) => requests.get(docId) === request
+        ? new Map(requests).set(docId, { ...request, queuedAt: Date.now() })
+        : requests);
     } catch (err: any) {
-      alert(err.response?.data?.detail || '重新索引触发失败');
+      setReindexRequests((requests) => {
+        const current = new Map(requests);
+        current.delete(docId);
+        return current;
+      });
+      alert(err.response?.data?.detail || '无法提交重处理请求，请稍后重试');
     }
   };
 
@@ -259,19 +312,25 @@ export const KnowledgeBaseDetail: React.FC = () => {
       case 'READY':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">
-            <CheckCircle className="w-3 h-3" /> 就绪 (Ready)
+            <CheckCircle className="w-3 h-3" /> 就绪
           </span>
         );
       case 'FAILED':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200">
-            <AlertTriangle className="w-3 h-3" /> 失败 (Failed)
+            <AlertTriangle className="w-3 h-3" /> 处理失败
+          </span>
+        );
+      case 'UPLOADED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+            <Clock className="w-3 h-3" /> 待处理
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-200 animate-pulse">
-            <Loader2 className="w-3 h-3 animate-spin" /> 处理中 ({status})
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+            <Loader2 className="w-3 h-3 motion-safe:animate-spin" /> {processingLabels[status] ?? `处理中 (${status})`}
           </span>
         );
     }
@@ -393,14 +452,14 @@ export const KnowledgeBaseDetail: React.FC = () => {
       {/* Document Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Table Header Controls */}
-        <div className="px-6 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <div className="px-4 sm:px-6 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50/50">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
             <FileText className="w-4 h-4 text-slate-400" />
-            <span>文档列表 ({documents.length})</span>
+            <span>文档列表</span>
             {hasProcessingDocs && (
-              <span className="ml-2 text-xs font-medium text-amber-600 flex items-center gap-1 animate-pulse">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                正在自动刷新处理状态...
+              <span className="text-xs font-medium text-amber-700 flex items-center gap-1">
+                <Loader2 className="w-3.5 h-3.5 motion-safe:animate-spin" />
+                状态自动刷新中
               </span>
             )}
           </div>
@@ -408,12 +467,32 @@ export const KnowledgeBaseDetail: React.FC = () => {
             type="button"
             onClick={() => fetchDocs(false)}
             disabled={loading || isRefreshing}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs transition cursor-pointer"
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-white border border-slate-200 hover:border-slate-300 rounded-lg shadow-2xs transition cursor-pointer"
             title="手动刷新文档状态"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-orange-600' : ''}`} />
             <span>刷新状态</span>
           </button>
+        </div>
+        <div role="group" aria-label="文档状态筛选" className="px-4 sm:px-6 py-3 flex flex-wrap gap-2 border-b border-slate-100">
+          {statusFilters.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={statusFilter === value}
+              onClick={() => setStatusFilter(value)}
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                statusFilter === value
+                  ? 'border-orange-200 bg-orange-50 text-orange-800'
+                  : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {label}
+              <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${
+                statusFilter === value ? 'bg-orange-100' : 'bg-slate-100'
+              }`}>{statusCounts[value]}</span>
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -426,66 +505,92 @@ export const KnowledgeBaseDetail: React.FC = () => {
               {canUpload ? '可拖拽上方区域或点击按钮上传首个文档' : '当前暂无文档'}
             </p>
           </div>
+        ) : visibleRows.length === 0 ? (
+          <div className="p-10 text-center text-sm text-slate-500">
+            <p>当前没有{statusFilters.find(({ value }) => value === statusFilter)?.label}的文档</p>
+            <button type="button" onClick={() => setStatusFilter('all')} className="mt-2 text-xs font-medium text-orange-700 hover:underline cursor-pointer">
+              查看全部文档
+            </button>
+          </div>
         ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
-                <th className="py-3 px-6">文件名称</th>
-                <th className="py-3 px-4">状态</th>
-                <th className="py-3 px-4">切块数量</th>
-                <th className="py-3 px-4">大小</th>
-                <th className="py-3 px-4">上传时间</th>
-                <th className="py-3 px-6 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
-              {documents.map((doc) => (
-                <tr key={doc.id} className="hover:bg-slate-50/50 transition">
-                  <td className="py-3.5 px-6 font-medium text-slate-900 flex items-center gap-2.5">
-                    <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="truncate max-w-xs">{doc.filename}</span>
-                  </td>
-                  <td className="py-3.5 px-4">{getStatusBadge(doc.status)}</td>
-                  <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
-                    {doc.chunk_count} 块
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-xs text-slate-500">
-                    {(doc.file_size / 1024).toFixed(1)} KB
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-xs text-slate-400">
-                    {new Date(doc.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="py-3.5 px-6 text-right space-x-2">
-                    <button
-                      onClick={() => viewChunks(doc.id)}
-                      className="p-1 text-slate-400 hover:text-blue-600 rounded transition cursor-pointer"
-                      title="预览切块"
-                    >
-                      <Layers className="w-4 h-4 inline" />
-                    </button>
-                    {canReindex && (
-                      <button
-                        onClick={() => handleReindex(doc.id)}
-                        className="p-1 text-slate-400 hover:text-orange-600 rounded transition cursor-pointer"
-                        title="重新索引"
-                      >
-                        <RefreshCw className="w-4 h-4 inline" />
-                      </button>
-                    )}
-                    {canDelete && (
-                      <button
-                        onClick={() => handleDelete(doc.id)}
-                        className="p-1 text-slate-400 hover:text-red-600 rounded transition cursor-pointer"
-                        title="删除文档"
-                      >
-                        <Trash2 className="w-4 h-4 inline" />
-                      </button>
-                    )}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-2xl text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
+                  <th className="py-3 px-6">文件名称</th>
+                  <th className="py-3 px-4">状态</th>
+                  <th className="py-3 px-4">切块数量</th>
+                  <th className="py-3 px-4">大小</th>
+                  <th className="py-3 px-4">上传时间</th>
+                  <th className="py-3 px-6 text-right">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {visibleRows.map(({ doc, status, group }) => (
+                  <tr key={doc.id} className="hover:bg-slate-50/50 transition">
+                    <td className="py-3.5 px-6 font-medium text-slate-900 flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                      <span className="truncate max-w-xs">{doc.filename}</span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      {getStatusBadge(status)}
+                      {group === 'failed' && (
+                        <details className="mt-1.5 max-w-64 text-xs">
+                          <summary className="cursor-pointer text-slate-600 hover:text-slate-900">查看失败原因</summary>
+                          <p className="mt-1 whitespace-pre-wrap wrap-anywhere text-rose-700">
+                            {doc.error_message?.trim() || '服务端未返回失败原因。'}
+                          </p>
+                        </details>
+                      )}
+                      {group === 'ready' && doc.error_message === 'No extractable text found in document' && (
+                        <p className="mt-1.5 text-xs text-amber-700">未提取到文字，请检查源文件</p>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
+                      {doc.chunk_count} 块
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-xs text-slate-500">
+                      {(doc.file_size / 1024).toFixed(1)} KB
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-xs text-slate-400">
+                      {new Date(doc.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="py-3.5 px-6 text-right whitespace-nowrap space-x-2">
+                      <button
+                        onClick={() => viewChunks(doc.id)}
+                        className="p-1 text-slate-400 hover:text-blue-600 rounded transition cursor-pointer"
+                        title="预览切块"
+                      >
+                        <Layers className="w-4 h-4 inline" />
+                      </button>
+                      {canUpload && (group === 'ready' || group === 'failed') && (
+                        <button
+                          type="button"
+                          onClick={() => handleReindex(doc)}
+                          disabled={reindexRequests.has(doc.id)}
+                          className={group === 'failed'
+                            ? 'inline-flex items-center gap-1 rounded-md border border-orange-200 px-2 py-1 align-middle text-xs font-medium text-orange-700 hover:bg-orange-50 transition cursor-pointer disabled:opacity-50'
+                            : 'p-1 text-slate-400 hover:text-orange-600 rounded transition cursor-pointer disabled:opacity-50'}
+                          title={group === 'failed' ? '重试处理' : '重新索引'}
+                        >
+                          {group === 'failed' ? '重试处理' : <RefreshCw className="w-4 h-4 inline" />}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          className="p-1 text-slate-400 hover:text-red-600 rounded transition cursor-pointer"
+                          title="删除文档"
+                        >
+                          <Trash2 className="w-4 h-4 inline" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
