@@ -17,6 +17,7 @@ import {
   Files,
   ShieldAlert,
   Loader2,
+  Search,
 } from 'lucide-react';
 
 export interface DocumentItem {
@@ -106,6 +107,7 @@ const KnowledgeBaseDocuments: React.FC<{
 }> = ({ kbId, documentsPath, canUpload, canDelete }) => {
   const [documents, setDocuments] = useState<DocumentItem[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [query, setQuery] = useState('');
   const [reindexRequests, setReindexRequests] = useState(new Map<string, ReindexRequest>());
   const [loadError, setLoadError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(true);
@@ -173,10 +175,14 @@ const KnowledgeBaseDocuments: React.FC<{
     const status = reindexRequests.get(doc.id)?.queuedAt ? 'UPLOADED' : doc.status;
     return { doc, status, group: getStatusGroup(status) };
   }) ?? [];
-  const statusCounts = { all: documentRows.length, pending: 0, processing: 0, failed: 0, ready: 0 };
-  for (const { group } of documentRows) statusCounts[group]++;
-  const visibleRows = statusFilter === 'all' ? documentRows : documentRows.filter(({ group }) => group === statusFilter);
-  const hasProcessingDocs = statusCounts.pending > 0 || statusCounts.processing > 0;
+  const searchTerm = query.trim().toLowerCase();
+  const matchingRows = searchTerm
+    ? documentRows.filter(({ doc }) => doc.filename.toLowerCase().includes(searchTerm))
+    : documentRows;
+  const statusCounts = { all: matchingRows.length, pending: 0, processing: 0, failed: 0, ready: 0 };
+  for (const { group } of matchingRows) statusCounts[group]++;
+  const visibleRows = statusFilter === 'all' ? matchingRows : matchingRows.filter(({ group }) => group === statusFilter);
+  const hasProcessingDocs = documentRows.some(({ group }) => group === 'pending' || group === 'processing');
 
   useEffect(() => {
     if (!hasProcessingDocs && !uploading) return;
@@ -358,33 +364,33 @@ const KnowledgeBaseDocuments: React.FC<{
     switch (status) {
       case 'READY':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">
+          <span className="inline-flex items-center gap-1 whitespace-nowrap px-1.5 sm:px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">
             <CheckCircle className="w-3 h-3" /> 就绪
           </span>
         );
       case 'FAILED':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200">
+          <span className="inline-flex items-center gap-1 whitespace-nowrap px-1.5 sm:px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 border border-rose-200">
             <AlertTriangle className="w-3 h-3" /> 处理失败
           </span>
         );
       case 'UPLOADED':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+          <span className="inline-flex items-center gap-1 whitespace-nowrap px-1.5 sm:px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
             <Clock className="w-3 h-3" /> 待处理
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-            <Loader2 className="w-3 h-3 motion-safe:animate-spin" /> {processingLabels[status] ?? `处理中 (${status})`}
+          <span className="inline-flex items-center gap-1 wrap-anywhere px-1.5 sm:px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+            <Loader2 className="w-3 h-3 shrink-0 motion-safe:animate-spin" /> {processingLabels[status] ?? `处理中 (${status})`}
           </span>
         );
     }
   };
 
   return (
-    <div className="p-8 max-w-6xl w-full mx-auto space-y-6">
+    <div className="p-4 sm:p-8 max-w-6xl w-full mx-auto space-y-6">
       {/* Hidden Multi-file input */}
       <input
         ref={fileInputRef}
@@ -402,17 +408,18 @@ const KnowledgeBaseDocuments: React.FC<{
       />
 
       {/* Top Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <Link
             to="/knowledge-bases"
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
+            aria-label="返回知识库列表"
+            className="shrink-0 p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">知识库文档管理</h2>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">KB ID: {kbId}</p>
+          <div className="min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900">知识库文档管理</h2>
+            <p className="text-xs text-slate-500 font-mono mt-0.5 wrap-anywhere">KB ID: {kbId}</p>
           </div>
         </div>
 
@@ -530,25 +537,38 @@ const KnowledgeBaseDocuments: React.FC<{
         )}
 
         {documents !== null && (
-          <div role="group" aria-label="文档状态筛选" className="px-4 sm:px-6 py-3 flex flex-wrap gap-2 border-b border-slate-100">
-            {statusFilters.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={statusFilter === value}
-                onClick={() => setStatusFilter(value)}
-                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
-                  statusFilter === value
-                    ? 'border-orange-200 bg-orange-50 text-orange-800'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {label}
-                <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${
-                  statusFilter === value ? 'bg-orange-100' : 'bg-slate-100'
-                }`}>{statusCounts[value]}</span>
-              </button>
-            ))}
+          <div className="px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3 border-b border-slate-100">
+            <label className="relative block w-full sm:max-w-xs">
+              <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                aria-label="按文件名搜索"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="按文件名搜索"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              />
+            </label>
+            <div role="group" aria-label="文档状态筛选" className="flex flex-wrap gap-2">
+              {statusFilters.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={statusFilter === value}
+                  onClick={() => setStatusFilter(value)}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+                    statusFilter === value
+                      ? 'border-orange-200 bg-orange-50 text-orange-800'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {label}
+                  <span className={`rounded-md px-1.5 py-0.5 tabular-nums ${
+                    statusFilter === value ? 'bg-orange-100' : 'bg-slate-100'
+                  }`}>{statusCounts[value]}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -564,32 +584,49 @@ const KnowledgeBaseDocuments: React.FC<{
           </div>
         ) : visibleRows.length === 0 ? (
           <div className="p-10 text-center text-sm text-slate-500">
-            <p>当前没有{statusFilters.find(({ value }) => value === statusFilter)?.label}的文档</p>
-            <button type="button" onClick={() => setStatusFilter('all')} className="mt-2 text-xs font-medium text-orange-700 hover:underline cursor-pointer">
-              查看全部文档
-            </button>
+            {matchingRows.length === 0 ? (
+              <>
+                <p role="status">没有文件名匹配的文档</p>
+                <button type="button" onClick={() => setQuery('')} className="mt-2 text-xs font-medium text-orange-700 hover:underline cursor-pointer">
+                  清除搜索
+                </button>
+              </>
+            ) : (
+              <>
+                <p role="status">{searchTerm ? '当前状态没有匹配的文档' : `当前没有${statusFilters.find(({ value }) => value === statusFilter)?.label}的文档`}</p>
+                <button type="button" onClick={() => setStatusFilter('all')} className="mt-2 text-xs font-medium text-orange-700 hover:underline cursor-pointer">
+                  {searchTerm ? '查看所有匹配文档' : '查看全部文档'}
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-2xl text-left border-collapse">
+            <table className="w-full lg:min-w-2xl text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-6">文件名称</th>
-                  <th className="py-3 px-4">状态</th>
-                  <th className="py-3 px-4">切块数量</th>
-                  <th className="py-3 px-4">大小</th>
-                  <th className="py-3 px-4">上传时间</th>
-                  <th className="py-3 px-6 text-right">操作</th>
+                  <th className="py-3 px-3 sm:px-6">文件名称</th>
+                  <th className="py-3 px-2 sm:px-4">状态</th>
+                  <th className="hidden lg:table-cell py-3 px-4">切块数量</th>
+                  <th className="hidden lg:table-cell py-3 px-4">大小</th>
+                  <th className="hidden lg:table-cell py-3 px-4">上传时间</th>
+                  <th className="py-3 px-3 sm:px-6 text-right">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {visibleRows.map(({ doc, status, group }) => (
                   <tr key={doc.id} className="hover:bg-slate-50/50 transition">
-                    <td className="py-3.5 px-6 font-medium text-slate-900 flex items-center gap-2.5">
-                      <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                      <span className="truncate max-w-xs">{doc.filename}</span>
+                    <td className="py-3.5 px-3 sm:px-6 font-medium text-slate-900">
+                      <div className="flex items-center gap-2.5">
+                        <FileText className="hidden sm:block w-4 h-4 text-slate-400 shrink-0" />
+                        <span title={doc.filename} className="wrap-anywhere lg:truncate lg:max-w-xs">{doc.filename}</span>
+                      </div>
+                      <div className="mt-1 font-mono text-xs font-normal text-slate-500 lg:hidden">
+                        {doc.chunk_count} 块 · {(doc.file_size / 1024).toFixed(1)} KB
+                        <div>{new Date(doc.created_at).toLocaleDateString()}</div>
+                      </div>
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3.5 px-2 sm:px-4">
                       {getStatusBadge(status)}
                       {group === 'failed' && (
                         <details className="mt-1.5 max-w-64 text-xs">
@@ -603,16 +640,16 @@ const KnowledgeBaseDocuments: React.FC<{
                         <p className="mt-1.5 text-xs text-amber-700">未提取到文字，请检查源文件</p>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
+                    <td className="hidden lg:table-cell py-3.5 px-4 font-mono text-xs text-slate-600">
                       {doc.chunk_count} 块
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-xs text-slate-500">
+                    <td className="hidden lg:table-cell py-3.5 px-4 font-mono text-xs text-slate-500">
                       {(doc.file_size / 1024).toFixed(1)} KB
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-xs text-slate-400">
+                    <td className="hidden lg:table-cell py-3.5 px-4 font-mono text-xs text-slate-400">
                       {new Date(doc.created_at).toLocaleDateString()}
                     </td>
-                    <td className="py-3.5 px-6 text-right whitespace-nowrap space-x-2">
+                    <td className="w-24 sm:w-auto py-3.5 px-3 sm:px-6 text-right sm:whitespace-nowrap space-x-1 sm:space-x-2 space-y-1 sm:space-y-0">
                       <button
                         onClick={() => viewChunks(doc.id)}
                         className="p-1 text-slate-400 hover:text-blue-600 rounded transition cursor-pointer"
@@ -626,7 +663,7 @@ const KnowledgeBaseDocuments: React.FC<{
                           onClick={() => handleReindex(doc)}
                           disabled={reindexRequests.has(doc.id)}
                           className={group === 'failed'
-                            ? 'inline-flex items-center gap-1 rounded-md border border-orange-200 px-2 py-1 align-middle text-xs font-medium text-orange-700 hover:bg-orange-50 transition cursor-pointer disabled:opacity-50'
+                            ? 'inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-orange-200 px-2 py-1 align-middle text-xs font-medium text-orange-700 hover:bg-orange-50 transition cursor-pointer disabled:opacity-50'
                             : 'p-1 text-slate-400 hover:text-orange-600 rounded transition cursor-pointer disabled:opacity-50'}
                           title={group === 'failed' ? '重试处理' : '重新索引'}
                         >

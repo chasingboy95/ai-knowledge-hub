@@ -236,6 +236,7 @@ async def stream_chat_message(
                 user_prompt=payload.content,
                 history=history,
                 model=payload.model,
+                knowledge_base_ids=payload.knowledge_base_ids,
             )
         else:
             generator = rag_service.stream_chat(

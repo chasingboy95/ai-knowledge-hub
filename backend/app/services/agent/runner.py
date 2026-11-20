@@ -42,6 +42,7 @@ class AgentRunner:
         user_prompt: str,
         history: list[dict[str, str]] | None = None,
         model: str | None = None,
+        knowledge_base_ids: list[UUID] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run multi-turn agent ReAct loop with real-time SSE stream events."""
         # 1. Record user message
@@ -81,6 +82,7 @@ class AgentRunner:
             workspace_id=workspace_id,
             user_id=user_id,
             db=db,
+            knowledge_base_ids=knowledge_base_ids,
         )
 
         llm_kwargs: dict[str, Any] = {}

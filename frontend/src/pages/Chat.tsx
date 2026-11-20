@@ -618,7 +618,8 @@ function ChatWorkspace() {
               </div>
             </div>
 
-            <div className="space-y-3">
+            <fieldset disabled={enableAgent} className="space-y-3 disabled:opacity-60">
+              {enableAgent && <legend className="mb-2 text-neutral-600">以下参数仅用于普通问答</legend>}
               <div>
                 <div className="flex justify-between font-semibold mb-1">
                   <span>Top-K 召回块数量: {topK}</span>
@@ -647,7 +648,7 @@ function ChatWorkspace() {
                   className="w-full accent-indigo-600"
                 />
               </div>
-            </div>
+            </fieldset>
           </div>
         )}
 
@@ -823,27 +824,24 @@ function ChatWorkspace() {
                 <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100">
                   <BookOpen className="size-4 shrink-0" />
                   <span className="truncate">
-                    {enableAgent ? 'Agent 自动检索' : selectedKbIds.length === 0 ? '全部知识库'
+                    {selectedKbIds.length === 0 ? '全部知识库'
                       : selectedKbIds.length === 1 ? knowledgeBases.find((kb) => kb.id === selectedKbIds[0])?.name
                       : `已选 ${selectedKbIds.length} 个知识库`}
                   </span>
                   <ChevronDown className="size-3 shrink-0" />
                 </summary>
                 <div className="absolute bottom-full left-0 z-10 mb-2 max-h-52 w-60 max-w-[75vw] space-y-2 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-lg">
-                  {enableAgent ? <p className="text-neutral-600">Agent 模式由模型选择检索范围。</p> : (
-                    <>
-                      <button type="button" onClick={() => setSelectedKbIds([])}
-                        className="text-left font-medium text-indigo-700 hover:underline">检索全部知识库</button>
-                      {knowledgeBases.map((kb) => (
-                        <label key={kb.id} className="flex items-start gap-2">
-                          <input type="checkbox" checked={selectedKbIds.includes(kb.id)}
-                            onChange={(e) => setSelectedKbIds((ids) => e.target.checked ? [...ids, kb.id] : ids.filter((id) => id !== kb.id))}
-                            className="accent-indigo-600" />
-                          <span className="min-w-0 wrap-break-word">{kb.name}</span>
-                        </label>
-                      ))}
-                    </>
-                  )}
+                  {enableAgent && <p className="text-neutral-600">Agent 在此范围内自主检索。</p>}
+                  <button type="button" onClick={() => setSelectedKbIds([])}
+                    className="text-left font-medium text-indigo-700 hover:underline">检索全部知识库</button>
+                  {knowledgeBases.map((kb) => (
+                    <label key={kb.id} className="flex items-start gap-2">
+                      <input type="checkbox" checked={selectedKbIds.includes(kb.id)}
+                        onChange={(e) => setSelectedKbIds((ids) => e.target.checked ? [...ids, kb.id] : ids.filter((id) => id !== kb.id))}
+                        className="accent-indigo-600" />
+                      <span className="min-w-0 wrap-break-word">{kb.name}</span>
+                    </label>
+                  ))}
                 </div>
               </details>
               {isStreaming ? (

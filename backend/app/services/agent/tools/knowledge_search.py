@@ -12,7 +12,7 @@ from backend.app.services.rag.retriever import SecureRAGRetriever
 class KnowledgeSearchArgs(BaseModel):
     query: str = Field(..., description="需要在知识库中检索的关键问题或语义短语")
     top_k: int = Field(default=3, ge=1, le=10, description="最大返回片段数量")
-    knowledge_base_ids: list[str] | None = Field(default=None, description="指定知识库 ID 列表（可选）")
+    knowledge_base_ids: list[str] | None = Field(default=None, description="在本轮允许的知识库中进一步筛选的 ID 列表（可选）")
 
 
 class KnowledgeSearchTool(BaseTool):
@@ -35,15 +35,24 @@ class KnowledgeSearchTool(BaseTool):
             kb_uuids: list[UUID] | None = None
             if args.knowledge_base_ids:
                 kb_uuids = [UUID(str(kid)) for kid in args.knowledge_base_ids]
+            if context.knowledge_base_ids:
+                if kb_uuids is None:
+                    kb_uuids = context.knowledge_base_ids
+                else:
+                    allowed_ids = set(context.knowledge_base_ids)
+                    kb_uuids = [kb_id for kb_id in kb_uuids if kb_id in allowed_ids]
 
-            chunks = await self.retriever.retrieve(
-                session=context.db,
-                workspace_id=context.workspace_id,
-                query=args.query,
-                knowledge_base_ids=kb_uuids,
-                top_k=args.top_k,
-                min_similarity=0.0,
-            )
+            chunks = []
+            # The retriever treats an empty ID list as unrestricted.
+            if kb_uuids is None or kb_uuids:
+                chunks = await self.retriever.retrieve(
+                    session=context.db,
+                    workspace_id=context.workspace_id,
+                    query=args.query,
+                    knowledge_base_ids=kb_uuids,
+                    top_k=args.top_k,
+                    min_similarity=0.0,
+                )
 
             if not chunks:
                 return ToolResult(

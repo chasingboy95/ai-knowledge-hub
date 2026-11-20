@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
+import { getAuditTimeWindow } from '../utils/auditTimeWindow';
 import {
   ShieldAlert,
   Shield,
@@ -35,77 +37,107 @@ interface AuditLog {
   resource_id?: string | null;
   ip_address?: string | null;
   user_agent?: string | null;
-  payload?: any;
+  payload?: Record<string, unknown> | null;
   created_at: string;
 }
 
+const PAGE_SIZE = 50;
+const initialFilters = {
+  eventType: '', resourceType: '', workspaceId: '', dateRange: 'all', query: '',
+};
+type AuditFilters = typeof initialFilters;
+type AuditRequest = AuditFilters & { offset: number; startTime: string; endTime: string };
+type AuditResult = { logs: AuditLog[] } | { error: string };
+
 export const AuditLogs: React.FC = () => {
-  const { currentOrg, workspaces } = useAuth();
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { currentOrg, currentRole, membershipError, hasPermission } = useAuth();
+  if (currentOrg && hasPermission('audit:read')) {
+    return <OrganizationAuditLogs key={currentOrg.id} organizationId={currentOrg.id} />;
+  }
 
-  // Filters
-  const [selectedEventType, setSelectedEventType] = useState<string>('');
-  const [selectedResourceType, setSelectedResourceType] = useState<string>('');
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
-  const [dateRange, setDateRange] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedPayload, setSelectedPayload] = useState<any | null>(null);
+  return (
+    <div className="p-8 max-w-6xl mx-auto w-full space-y-4">
+      <h1 className="text-2xl font-bold text-slate-900 tracking-tight">安全与操作审计日志</h1>
+      {!currentOrg ? (
+        <p className="text-sm text-slate-600">请选择要查看的组织。</p>
+      ) : membershipError ? (
+        <p className="text-sm text-slate-600">请重试加载组织权限。</p>
+      ) : currentRole ? (
+        <p role="alert" className="text-sm text-slate-600">查看审计日志需要 audit:read 权限，请联系组织管理员。</p>
+      ) : (
+        <p role="status" className="text-sm text-slate-600">正在加载组织权限…</p>
+      )}
+    </div>
+  );
+};
 
-  const fetchLogs = async () => {
-    if (!currentOrg) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const params: Record<string, any> = { limit: 100 };
-      if (selectedEventType) params.event_type = selectedEventType;
-      if (selectedResourceType) params.resource_type = selectedResourceType;
-      if (selectedWorkspaceId) params.workspace_id = selectedWorkspaceId;
-      if (searchQuery.trim()) params.query = searchQuery.trim();
-
-      // Date range calculation
-      if (dateRange !== 'all') {
-        const now = new Date();
-        let startTime = new Date();
-        if (dateRange === 'today') {
-          startTime.setHours(0, 0, 0, 0);
-        } else if (dateRange === '3days') {
-          startTime.setDate(now.getDate() - 3);
-        } else if (dateRange === '7days') {
-          startTime.setDate(now.getDate() - 7);
-        } else if (dateRange === '30days') {
-          startTime.setDate(now.getDate() - 30);
-        }
-        params.start_time = startTime.toISOString();
-      }
-
-      const res = await apiClient.get<AuditLog[]>(`/organizations/${currentOrg.id}/audit-logs`, {
-        params,
-      });
-      setLogs(res.data);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || '获取审计日志失败，请确认您是否拥有 audit:read 管理员权限');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+function OrganizationAuditLogs({ organizationId }: { organizationId: string }) {
+  const { workspaces } = useAuth();
+  const [request, setRequest] = useState<AuditRequest>(() => ({
+    ...initialFilters, ...getAuditTimeWindow(initialFilters.dateRange), offset: 0,
+  }));
+  const [response, setResponse] = useState<{ request: AuditRequest; result: AuditResult } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPayload, setSelectedPayload] = useState<AuditLog['payload']>(null);
+  const { eventType, resourceType, workspaceId, dateRange, offset } = request;
+  const result = response?.request === request ? response.result : null;
+  const records = result && 'logs' in result ? result.logs : [];
+  const logs = records.slice(0, PAGE_SIZE);
+  const error = result && 'error' in result ? result.error : null;
+  const isLoading = result === null;
 
   useEffect(() => {
-    fetchLogs();
-  }, [currentOrg, selectedEventType, selectedResourceType, selectedWorkspaceId, dateRange]);
+    const controller = new AbortController();
+    const { signal } = controller;
+    apiClient.get<AuditLog[]>(`/organizations/${organizationId}/audit-logs`, {
+      signal,
+      params: {
+        limit: PAGE_SIZE + 1,
+        offset: request.offset,
+        event_type: request.eventType || undefined,
+        resource_type: request.resourceType || undefined,
+        workspace_id: request.workspaceId || undefined,
+        start_time: request.startTime || undefined,
+        end_time: request.endTime,
+        query: request.query || undefined,
+      },
+    })
+      .then(({ data }) => {
+        if (!signal.aborted) setResponse({ request, result: { logs: data } });
+      })
+      .catch((err: unknown) => {
+        if (signal.aborted) return;
+        const error = isAxiosError(err) && err.response?.status === 403
+          ? '查看审计日志需要 audit:read 权限，请联系组织管理员。'
+          : '无法加载审计日志。请检查网络连接后重试。';
+        setResponse({ request, result: { error } });
+      });
+    return () => controller.abort();
+  }, [organizationId, request]);
+
+  const updateFilters = (filters: Partial<AuditFilters>) => {
+    setSelectedPayload(null);
+    const now = new Date();
+    setRequest((previous) => ({
+      ...previous,
+      ...filters,
+      ...getAuditTimeWindow(filters.dateRange ?? previous.dateRange, now),
+      offset: 0,
+    }));
+  };
+  const loadPage = (pageOffset: number) => {
+    setSelectedPayload(null);
+    setRequest((previous) => ({ ...previous, offset: pageOffset }));
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchLogs();
+    updateFilters({ query: searchQuery.trim() });
   };
 
   const resetFilters = () => {
-    setSelectedEventType('');
-    setSelectedResourceType('');
-    setSelectedWorkspaceId('');
-    setDateRange('all');
     setSearchQuery('');
+    updateFilters(initialFilters);
   };
 
   const getEventBadge = (eventType: string) => {
@@ -244,7 +276,8 @@ export const AuditLogs: React.FC = () => {
         </div>
 
         <button
-          onClick={fetchLogs}
+          type="button"
+          onClick={() => updateFilters({})}
           disabled={isLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition cursor-pointer self-start sm:self-auto"
         >
@@ -260,8 +293,9 @@ export const AuditLogs: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <Filter className="w-3.5 h-3.5 text-slate-400" />
             <select
-              value={selectedEventType}
-              onChange={(e) => setSelectedEventType(e.target.value)}
+              aria-label="事件类型"
+              value={eventType}
+              onChange={(e) => updateFilters({ eventType: e.target.value })}
               className="bg-transparent focus:outline-none cursor-pointer"
             >
               <option value="">全部事件类型</option>
@@ -300,8 +334,9 @@ export const AuditLogs: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <Layers className="w-3.5 h-3.5 text-slate-400" />
             <select
-              value={selectedResourceType}
-              onChange={(e) => setSelectedResourceType(e.target.value)}
+              aria-label="资源类型"
+              value={resourceType}
+              onChange={(e) => updateFilters({ resourceType: e.target.value })}
               className="bg-transparent focus:outline-none cursor-pointer"
             >
               <option value="">全部资源类型</option>
@@ -320,8 +355,9 @@ export const AuditLogs: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <Building2 className="w-3.5 h-3.5 text-slate-400" />
             <select
-              value={selectedWorkspaceId}
-              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+              aria-label="工作区"
+              value={workspaceId}
+              onChange={(e) => updateFilters({ workspaceId: e.target.value })}
               className="bg-transparent focus:outline-none cursor-pointer"
             >
               <option value="">全部工作区</option>
@@ -337,8 +373,9 @@ export const AuditLogs: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <Calendar className="w-3.5 h-3.5 text-slate-400" />
             <select
+              aria-label="时间范围"
               value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
+              onChange={(e) => updateFilters({ dateRange: e.target.value })}
               className="bg-transparent focus:outline-none cursor-pointer"
             >
               <option value="all">全部时间</option>
@@ -350,10 +387,11 @@ export const AuditLogs: React.FC = () => {
           </div>
 
           {/* Filter: Keyword Search */}
-          <form onSubmit={handleSearchSubmit} className="flex-1 min-w-[200px] flex items-center">
-            <div className="relative w-full">
+          <form onSubmit={handleSearchSubmit} className="flex-1 min-w-[200px] flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
               <input
                 type="text"
+                aria-label="搜索关键词"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索操作人邮箱、资源ID或事件..."
@@ -361,6 +399,9 @@ export const AuditLogs: React.FC = () => {
               />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2 pointer-events-none" />
             </div>
+            <button type="submit" className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-medium text-slate-700 hover:bg-slate-200 cursor-pointer">
+              搜索
+            </button>
           </form>
 
           {/* Reset Filters */}
@@ -380,24 +421,45 @@ export const AuditLogs: React.FC = () => {
         <div className="p-6 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-900 flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-bold">权限受限或获取异常</h4>
-            <p className="mt-1 text-xs text-amber-800 leading-relaxed">{error}</p>
+            <p role="alert">{error}</p>
+            <button type="button" onClick={() => loadPage(offset)} className="mt-2 text-xs font-semibold text-amber-900 hover:underline cursor-pointer">
+              重试
+            </button>
           </div>
         </div>
       ) : (
         /* Logs Table */
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <Layers className="w-4 h-4 text-slate-500" />
-              <span>审计事件记录 ({logs.length})</span>
+              <span>审计事件记录</span>
             </div>
+            <nav aria-label="审计日志分页" className="flex items-center gap-3 text-xs text-slate-600">
+              <button
+                type="button"
+                onClick={() => loadPage(offset - PAGE_SIZE)}
+                disabled={isLoading || offset === 0}
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium hover:bg-slate-100 enabled:cursor-pointer disabled:opacity-50"
+              >
+                上一页
+              </button>
+              <span aria-live="polite">第 {offset / PAGE_SIZE + 1} 页{!isLoading && ` · ${logs.length} 条`}</span>
+              <button
+                type="button"
+                onClick={() => loadPage(offset + PAGE_SIZE)}
+                disabled={records.length <= PAGE_SIZE}
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-medium hover:bg-slate-100 enabled:cursor-pointer disabled:opacity-50"
+              >
+                下一页
+              </button>
+            </nav>
           </div>
 
           {isLoading ? (
-            <div className="p-12 text-center text-slate-400">正在检索安全审计记录...</div>
+            <div role="status" className="p-12 text-center text-slate-400">正在检索安全审计记录...</div>
           ) : logs.length === 0 ? (
-            <div className="p-12 text-center text-slate-400">当前筛选条件下暂无审计事件</div>
+            <div className="p-12 text-center text-slate-400">{offset ? '本页暂无审计事件' : '当前筛选条件下暂无审计事件'}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-100 text-xs">
@@ -480,4 +542,4 @@ export const AuditLogs: React.FC = () => {
       )}
     </div>
   );
-};
+}

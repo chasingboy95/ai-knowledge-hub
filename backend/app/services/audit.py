@@ -79,6 +79,6 @@ async def list_audit_logs(
             )
         )
 
-    stmt = stmt.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+    stmt = stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
     result = await db.scalars(stmt)
     return list(result.all())

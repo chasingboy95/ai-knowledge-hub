@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 import { getVisibleKnowledgeBases, type KnowledgeBase, type KnowledgeBaseSort } from '../utils/knowledgeBases';
 import { generateSlug } from '../utils/slug';
 import { Link } from 'react-router-dom';
-import { BookOpen, Plus, Folder, Calendar, ArrowRight, X, AlertCircle, Layers, Search } from 'lucide-react';
+import { BookOpen, Plus, Folder, Calendar, ArrowRight, X, AlertCircle, Layers, Search, Pencil } from 'lucide-react';
 
 export const KnowledgeBases: React.FC = () => {
   const { currentOrg, currentWorkspace, hasPermission } = useAuth();
@@ -12,15 +13,25 @@ export const KnowledgeBases: React.FC = () => {
   const [requestVersion, setRequestVersion] = useState(0);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<KnowledgeBaseSort>('created');
-  const [showModal, setShowModal] = useState(false);
+  const [formTarget, setFormTarget] = useState<'new' | KnowledgeBase | null>(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [isSlugTouched, setIsSlugTouched] = useState(false);
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const canCreateKB = hasPermission('knowledge:create');
+  const canEditKB = hasPermission('knowledge:update');
+  const editing = formTarget === 'new' ? null : formTarget;
+  const nameChanged = editing !== null && name.trim() !== editing.name.trim();
+  const descriptionChanged = editing !== null && description.trim() !== (editing.description ?? '').trim();
+  const canSubmit = !!name.trim() && (editing
+    ? canEditKB && (nameChanged || descriptionChanged)
+    : canCreateKB && !!slug.trim());
   const workspace = currentOrg?.id === currentWorkspace?.organization_id ? currentWorkspace : null;
   const endpoint = currentOrg && workspace
     ? `/organizations/${currentOrg.id}/workspaces/${workspace.id}/knowledge-bases`
@@ -47,44 +58,69 @@ export const KnowledgeBases: React.FC = () => {
     return () => controller.abort();
   }, [endpoint, requestVersion]);
 
-  const handleOpenModal = () => {
-    setName('');
+  useEffect(() => {
+    if (formTarget && dialogRef.current && !dialogRef.current.open) {
+      dialogRef.current.showModal();
+      nameInputRef.current?.focus();
+    }
+  }, [formTarget]);
+
+  const handleOpenModal = (kb?: KnowledgeBase) => {
+    setName(kb?.name ?? '');
     setSlug('');
     setIsSlugTouched(false);
-    setDescription('');
+    setDescription(kb?.description ?? '');
     setError(null);
-    setShowModal(true);
+    setFeedback('');
+    setFormTarget(kb ?? 'new');
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const closeForm = () => {
+    dialogRef.current?.close();
+    setFormTarget(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formTarget || isSubmitting || !canSubmit) return;
     if (!endpoint) {
       setError('请先在左侧选择或创建工作区');
       return;
     }
-    if (!name.trim()) return;
 
     setError(null);
     setIsSubmitting(true);
 
     try {
-      await apiClient.post(
-        endpoint,
-        {
+      if (editing) {
+        const { data: updated } = await apiClient.patch<KnowledgeBase>(`${endpoint}/${editing.id}`, {
+          ...(nameChanged ? { name: name.trim() } : {}),
+          ...(descriptionChanged ? { description: description.trim() } : {}),
+        });
+        setList((previous) => previous?.endpoint === endpoint && previous.data
+          ? { ...previous, data: previous.data.map((kb) => kb.id === updated.id ? updated : kb) }
+          : previous);
+        setFeedback('知识库信息已更新。');
+      } else {
+        await apiClient.post(endpoint, {
           name: name.trim(),
           slug: slug.trim(),
           description: description.trim() || null,
-        }
-      );
-      setShowModal(false);
-      setQuery('');
-      reloadKBs();
-    } catch (err: any) {
-      setError(
-        err.response?.data?.error?.message ||
-        err.response?.data?.detail ||
-        '创建知识库失败，请检查唯一标识是否重复'
-      );
+        });
+        setQuery('');
+        reloadKBs();
+      }
+      closeForm();
+    } catch (err) {
+      const status = isAxiosError(err) ? err.response?.status : undefined;
+      if (editing) {
+        setError(status === 403 ? '您没有修改此知识库的权限。'
+          : status === 404 ? '找不到此知识库，请关闭窗口后查看列表。'
+          : '无法保存知识库信息，请重试。');
+        if (status === 404) reloadKBs();
+      } else {
+        setError(status === 409 ? '知识库标识已被使用。' : '无法创建知识库，请重试。');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -103,7 +139,7 @@ export const KnowledgeBases: React.FC = () => {
         </div>
         {canCreateKB && (
           <button
-            onClick={handleOpenModal}
+            onClick={() => handleOpenModal()}
             disabled={!workspace}
             className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition flex shrink-0 items-center gap-2 whitespace-nowrap shadow-sm disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
           >
@@ -112,6 +148,10 @@ export const KnowledgeBases: React.FC = () => {
           </button>
         )}
       </div>
+
+      {feedback && <div role="status" className="rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-2 text-sm text-indigo-800">
+        {feedback}
+      </div>}
 
       {!!result?.data?.length && (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -166,7 +206,7 @@ export const KnowledgeBases: React.FC = () => {
           </p>
           {canCreateKB && (
             <button
-              onClick={handleOpenModal}
+              onClick={() => handleOpenModal()}
               className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium text-xs rounded-lg transition inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -185,89 +225,113 @@ export const KnowledgeBases: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {visibleKbs.map((kb) => (
-            <Link
-              key={kb.id}
-              to={`/knowledge-bases/${kb.id}`}
-              className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm hover:shadow-md hover:border-orange-200 transition group flex flex-col justify-between"
-            >
-              <div>
-                <div className="w-10 h-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center mb-4">
-                  <Folder className="w-5 h-5" />
+            <article key={kb.id} className="relative">
+              <Link
+                to={`/knowledge-bases/${kb.id}`}
+                className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm hover:shadow-md hover:border-orange-200 transition group flex h-full flex-col justify-between"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center mb-4">
+                    <Folder className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 group-hover:text-orange-600 transition truncate">
+                    {kb.name}
+                  </h3>
+                  <p className="text-xs font-mono text-slate-400 mt-0.5 truncate">{kb.slug}</p>
+                  <p className="text-xs text-slate-600 mt-3 line-clamp-2 leading-relaxed">
+                    {kb.description || '暂无详细描述'}
+                  </p>
                 </div>
-                <h3 className="text-base font-bold text-slate-900 group-hover:text-orange-600 transition truncate">
-                  {kb.name}
-                </h3>
-                <p className="text-xs font-mono text-slate-400 mt-0.5 truncate">{kb.slug}</p>
-                <p className="text-xs text-slate-600 mt-3 line-clamp-2 leading-relaxed">
-                  {kb.description || '暂无详细描述'}
-                </p>
-              </div>
 
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-                <span className="flex items-center gap-1 font-mono text-[10px]">
-                  <Calendar className="w-3 h-3" />
-                  {new Date(kb.created_at).toLocaleDateString()}
-                </span>
-                <span className="text-orange-600 group-hover:translate-x-1 transition flex items-center gap-1 font-semibold">
-                  查看文档 <ArrowRight className="w-3.5 h-3.5" />
-                </span>
-              </div>
-            </Link>
+                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                  <span className="flex items-center gap-1 font-mono text-[10px]">
+                    <Calendar className="w-3 h-3" />
+                    {new Date(kb.created_at).toLocaleDateString()}
+                  </span>
+                  <span className="text-orange-600 group-hover:translate-x-1 transition flex items-center gap-1 font-semibold">
+                    查看文档 <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </Link>
+              {canEditKB && (
+                <button type="button" onClick={() => handleOpenModal(kb)} aria-label={`编辑知识库 ${kb.name}`}
+                  className="absolute right-4 top-4 rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                  <Pencil className="size-4" aria-hidden="true" />
+                </button>
+              )}
+            </article>
           ))}
         </div>
       )}
 
-      {/* Create Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">
-                新建知识库 - {workspace?.name}
-              </h3>
-              <button
-                onClick={() => setShowModal(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      {formTarget && (
+        <dialog
+          ref={dialogRef}
+          aria-labelledby="knowledge-base-form-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            if (!isSubmitting) closeForm();
+          }}
+          className="fixed inset-0 m-auto max-h-[90dvh] w-11/12 max-w-md overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl backdrop:bg-black/40"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 id="knowledge-base-form-title" className="text-lg font-bold text-slate-900">
+              {editing ? '编辑知识库' : `新建知识库 - ${workspace?.name}`}
+            </h3>
+            <button
+              type="button"
+              aria-label="关闭窗口"
+              onClick={closeForm}
+              disabled={isSubmitting}
+              className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {error && (
+            <div role="alert" className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} aria-busy={isSubmitting} className="space-y-4">
+            <div>
+              <label htmlFor="knowledge-base-name" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                知识库名称
+              </label>
+              <input
+                id="knowledge-base-name"
+                ref={nameInputRef}
+                type="text"
+                required
+                maxLength={255}
+                readOnly={isSubmitting}
+                value={name}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setName(val);
+                  if (!editing && !isSlugTouched) {
+                    setSlug(generateSlug(val).slice(0, 100));
+                  }
+                }}
+                placeholder="如：技术规范与产品文档"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              />
             </div>
 
-            {error && (
-              <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreate} className="space-y-4">
+            {!editing && (
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  知识库名称
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setName(val);
-                    if (!isSlugTouched) {
-                      setSlug(generateSlug(val));
-                    }
-                  }}
-                  placeholder="如：技术规范与产品文档"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                <label htmlFor="knowledge-base-slug" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                   知识库标识 (Slug)
                 </label>
                 <input
+                  id="knowledge-base-slug"
                   type="text"
                   required
+                  maxLength={100}
+                  readOnly={isSubmitting}
                   value={slug}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -278,39 +342,42 @@ export const KnowledgeBases: React.FC = () => {
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 font-mono text-xs"
                 />
               </div>
+            )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  描述 (选填)
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="简述该知识库存储的文档类型及用途"
-                  rows={3}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
-                />
-              </div>
+            <div>
+              <label htmlFor="knowledge-base-description" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                描述 (选填)
+              </label>
+              <textarea
+                id="knowledge-base-description"
+                readOnly={isSubmitting}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="简述该知识库存储的文档类型及用途"
+                rows={3}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              />
+            </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !name.trim() || !slug.trim()}
-                  className="px-4 py-2 text-sm font-medium bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmitting ? '创建中...' : '确认创建'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={isSubmitting}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || !canSubmit}
+                className="px-4 py-2 text-sm font-medium bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition disabled:opacity-50 cursor-pointer"
+              >
+                {editing ? (isSubmitting ? '保存中…' : '保存修改') : (isSubmitting ? '创建中…' : '确认创建')}
+              </button>
+            </div>
+          </form>
+        </dialog>
       )}
     </div>
   );

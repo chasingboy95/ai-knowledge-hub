@@ -12,6 +12,7 @@ class ToolContext:
     workspace_id: UUID
     user_id: UUID | None
     db: AsyncSession
+    knowledge_base_ids: list[UUID] | None = None
 
 
 @dataclass
