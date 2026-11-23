@@ -5,7 +5,11 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.document import DocumentChunk
-from backend.app.services.vector_store.base import SearchResult, VectorRecord, VectorStore
+from backend.app.services.vector_store.base import (
+    SearchResult,
+    VectorRecord,
+    VectorStore,
+)
 
 
 class PGVectorStore(VectorStore):

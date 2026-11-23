@@ -2,7 +2,7 @@ import secrets
 from datetime import timedelta
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,11 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.core.security import hash_refresh_token
 from backend.app.db.base import utc_now
-from backend.app.models.organization import Membership, Organization, OrganizationInvitation
+from backend.app.models.organization import (
+    Membership,
+    Organization,
+    OrganizationInvitation,
+)
 from backend.app.models.rbac import Role
 from backend.app.models.user import User
 from backend.app.services.auth import normalize_email

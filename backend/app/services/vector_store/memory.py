@@ -1,6 +1,12 @@
-import numpy as np
 from typing import Any
-from backend.app.services.vector_store.base import SearchResult, VectorRecord, VectorStore
+
+import numpy as np
+
+from backend.app.services.vector_store.base import (
+    SearchResult,
+    VectorRecord,
+    VectorStore,
+)
 
 
 class InMemoryVectorStore(VectorStore):
@@ -42,10 +48,7 @@ class InMemoryVectorStore(VectorStore):
                     if str(record.knowledge_base_id) not in kb_strs:
                         matches = False
                         break
-                elif getattr(record, k, None) is not None and str(getattr(record, k)) != str(v):
-                    matches = False
-                    break
-                elif getattr(record, k, None) is None:
+                elif getattr(record, k, None) is not None and str(getattr(record, k)) != str(v) or getattr(record, k, None) is None:
                     matches = False
                     break
             if not matches:

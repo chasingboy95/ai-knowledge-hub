@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 from backend.app.services.reranker.base import BaseRerankerProvider
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ class MockRerankerProvider(BaseRerankerProvider):
             return []
         # Sort by existing similarity score descending and attach rerank_score
         sorted_chunks = sorted(chunks, key=lambda c: c.similarity, reverse=True)
-        results: list["RetrievedChunk"] = []
+        results: list[RetrievedChunk] = []
         for c in sorted_chunks[:top_k]:
             c.rerank_score = c.similarity
             results.append(c)

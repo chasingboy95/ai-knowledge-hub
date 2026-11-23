@@ -1,4 +1,5 @@
 import httpx
+
 from backend.app.services.embeddings.base import EmbeddingProvider
 
 

@@ -1,5 +1,7 @@
 import hashlib
+
 import numpy as np
+
 from backend.app.services.embeddings.base import EmbeddingProvider
 
 

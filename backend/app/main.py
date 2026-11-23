@@ -5,9 +5,9 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.api.errors import error_response
+from backend.app.api.router import api_router
 from backend.app.core.config import get_settings
 from backend.app.db.session import dispose_engine
-from backend.app.api.router import api_router
 
 
 @asynccontextmanager

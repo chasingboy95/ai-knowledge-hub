@@ -2,7 +2,7 @@
 
 > 面向企业内部团队的多租户 AI 知识库 SaaS。
 >
-> 当前状态：**全阶段（Phase 1 ~ Phase 6）已完整交付并通过 100% 自动化测试（138 项全量 PASS）、PostgreSQL 真实迁移升级与前端静态构建验证**。企业知识库平台全栈闭环就绪。
+> 当前状态：**全阶段（Phase 1 ~ Phase 6 及两阶段 RAG / Chonkie 扩展）已完整交付并通过 100% 自动化测试（170 项全量 PASS）、PostgreSQL 真实迁移升级与前端静态构建验证**。企业知识库平台全栈闭环就绪。
 
 - **工程设计全景规范**：[docs/ENGINEERING_DESIGN.md](../docs/ENGINEERING_DESIGN.md)
 - **Phase 1 执行计划**：[docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md](../docs/superpowers/plans/2026-08-28-phase-1-python-saas-backend.md)
@@ -22,13 +22,13 @@
 构建一个支持企业内部团队协作的多租户 AI 知识库平台，覆盖：
 
 - 用户、组织、Workspace 和权限管理
-- 文档上传、解析、切块、向量化与检索
-- 带权限控制的 RAG 问答
-- Agent 工具调用与业务系统集成
-- 现代化企业 SaaS 前端控制台 (Vite + React 19 + TypeScript + Tailwind CSS)
+- 文档上传、解析、智能结构化切块 (Chonkie)、向量化与两阶段检索 (PGVector + Reranker)
+- 带租户与权限边界隔离的 Secure RAG 问答与多轮上下文对话
+- Agent 工具调用与业务系统集成（知识检索、工单创建）
+- 现代化企业 SaaS 前端控制台 (Vite + React + TypeScript + Tailwind CSS)
 - 安全审计日志轨迹追踪 (Audit Trail Logging)
 - 可拔插对象存储适配器 (Local & S3 / MinIO)
-- 认证、授权、密钥和数据安全
+- 适配本地与云端模型矩阵（Qwen3 Embedding 1024 维、Qwen3 Reranker、Qwen3.5 LLM）
 
 核心项目特色是 **Secure RAG / Permission-aware RAG**：
 
@@ -49,7 +49,7 @@ Permission
 Workspace
 KnowledgeBase
 Document
-DocumentChunk (Vector 1536)
+DocumentChunk (Vector 1024)
 ChatSession
 ChatMessage
 AuditLog
@@ -64,7 +64,7 @@ Organization
 └── Workspaces
     ├── Knowledge Bases
     │   └── Documents
-    │       └── Document Chunks (pgvector 1536)
+    │       └── Document Chunks (pgvector 1024)
     └── Chat Sessions
         └── Chat Messages (Citations & Tokens)
 ```
@@ -78,44 +78,18 @@ erDiagram
     organizations ||--o{ audit_logs : "records"
     users ||--o{ memberships : "participates"
     roles ||--o{ memberships : "assigns"
-    roles ||--o{ role_permissions : "includes"
-    permissions ||--o{ role_permissions : "granted_to"
+    roles ||--o{ role_permissions : "contains"
+    permissions ||--o{ role_permissions : "granted_in"
     workspaces ||--o{ knowledge_bases : "contains"
-    knowledge_bases ||--o{ documents : "contains"
-    documents ||--o{ document_chunks : "chunks_into"
-    workspaces ||--o{ chat_sessions : "holds"
+    workspaces ||--o{ chat_sessions : "hosts"
+    knowledge_bases ||--o{ documents : "groups"
+    documents ||--o{ document_chunks : "chunked_into"
     chat_sessions ||--o{ chat_messages : "records"
 ```
 
-初始角色：
+### 2.2 租户隔离策略
 
-```text
-OWNER
-ADMIN
-EDITOR
-VIEWER
-```
-
-初始权限：
-
-```yaml
-knowledge:create
-knowledge:read
-knowledge:update
-knowledge:delete
-
-document:upload
-document:delete
-
-member:invite
-member:remove
-
-audit:read
-```
-
-### 2.2 多租户隔离
-
-首版采用共享数据库、共享 Schema，通过 `organization_id` 与 `workspace_id` 实现双重严格租户与边界隔离：
+采用 **共享数据库、共享模式、行级租户隔离** 架构：
 
 ```text
 Shared Database
@@ -150,6 +124,13 @@ Permission
 - Markdown
 - TXT / JSON / CSV（`PlainTextParser`）
 
+分块引擎：
+- 集成 **Chonkie** 分块框架 (`ChonkieChunker`)，支持：
+  - `sentence`：依据句子标点语义边界切分，兼顾长短句自然表达；
+  - `recursive`：多级分隔符递归回退分块；
+  - `token`：固定 token 窗口分块。
+- 完整保留文档页码（`page_number`）与字符起止偏移元数据。
+
 处理流程与状态机：
 
 ```mermaid
@@ -158,9 +139,9 @@ stateDiagram-v2
     UPLOADED --> PARSING : 启动后台任务解析文件
     PARSING --> CHUNKING : 文本提取与清洗完成
     PARSING --> FAILED : 格式不支持或文件损坏
-    CHUNKING --> EMBEDDING : 递归分块完成 (保留页码元数据)
+    CHUNKING --> EMBEDDING : Chonkie/递归分块完成 (保留页码元数据)
     CHUNKING --> FAILED : 切块异常
-    EMBEDDING --> READY : 生成 1536 维向量并持久化存储
+    EMBEDDING --> READY : 生成 1024 维向量并持久化存储
     EMBEDDING --> FAILED : Embedding 服务异常或超时
     FAILED --> UPLOADED : POST .../reindex 触发重试
     READY --> UPLOADED : POST .../reindex 触发重新索引
@@ -168,55 +149,37 @@ stateDiagram-v2
 
 文档原文件存储于对象存储，不直接存入 PostgreSQL。解析、切块和 Embedding 属于异步任务。
 
-### 2.4 RAG 与引用
+### 2.4 两阶段 RAG 与引用溯源
 
-目标流程：
+两阶段检索与安全过滤管线：
 
 ```text
 User Query
     ↓
-Query Rewrite
+Query Rewrite / Clean
     ↓
-Embedding
+Embedding (text-embedding-qwen3-embedding-0.6b, 1024 维)
     ↓
-Vector Search
+Phase 1: Vector Candidate Retrieval (PGVector HNSW, Candidate Top 15)
     ↓
-Tenant Filter
+Tenant Filter (workspace_id + organization_id 物理隔离)
     ↓
-Document ACL / Permission Filter
+Document ACL & Knowledge Base Scope Filter
     ↓
-Top K
+Phase 2: Neural Rerank (qwen3-reranker-0.6b Cross-Encoder 语义精排, Final Top 5)
     ↓
-Reranking
+Context Assembly (带序号与元数据的防注入 Prompt)
     ↓
-Prompt Construction
+LLM Streaming Generation (qwen3.5-4b-mlx / 思考标签清洗)
     ↓
-LLM
-    ↓
-Answer + Citation
+Answer Stream + Citations (含 rerank_score 与页码来源)
 ```
 
-安全过滤顺序的最低要求：
-
-```text
-Vector Search
-        ↓
-Candidate Documents
-        ↓
-Tenant Filter
-        ↓
-Document ACL
-        ↓
-Authorized Chunks
-        ↓
-LLM
-```
-
-即使某个未授权文档的相似度很高，也必须在进入 Prompt 前被丢弃。回答应尽量返回来源文件、页码或可定位的引用信息。
+即使某个未授权文档的相似度很高，也必须在进入 Prompt 前被丢弃。回答实时输出来源文件、页码以及重排相关度分数 `rerank_score`。
 
 ### 2.5 Agent 与工具调用
 
-首期规划核心工具：
+规划核心工具：
 
 ```text
 search_knowledge_base()
@@ -238,65 +201,53 @@ search_knowledge_base
 create_support_ticket
 ```
 
-Agent 工具必须复用当前用户的租户上下文和权限，不能绕过 RBAC 或文档 ACL。
+### 2.6 企业安全审计日志 (Audit Logging)
 
-### 2.6 React SaaS 前端
-
-页面规划（已交付）：
-
-- 登录、注册、邀请令牌展示 (`Login.tsx`, `Register.tsx`)
-- Dashboard：Organization 概览、Workspace 列表 (`Dashboard.tsx`)
-- Knowledge Base：知识库列表、知识库创建 (`KnowledgeBases.tsx`)
-- Document：文档上传、状态实时刷新、切块抽屉预览、重新索引、删除 (`KnowledgeBaseDetail.tsx`)
-- Chat / RAG / Agent：多会话管理、SSE 流式打字推流、引用卡片悬停展开、Agent 工具调用卡片实时折叠展示 (`Chat.tsx`)
-- Members：成员列表、邀请生成、角色显示与移除 (`Members.tsx`)
-- AuditLogs：安全与操作审计日志视图、事件类型过滤、Payload JSON 抽屉明细 (`AuditLogs.tsx`)
-
-### 2.7 审计与可观测性
-
-审计事件设计：
+针对关键资源的全生命周期操作统一落盘 `audit_logs` 表：
 
 ```text
-AUTH_LOGIN
-AUTH_LOGOUT
-ORGANIZATION_UPDATE
-MEMBER_INVITE
-MEMBER_REMOVE
-WORKSPACE_CREATE
-DOCUMENT_UPLOAD
-DOCUMENT_DELETE
-RAG_QUERY
-AGENT_TOOL_CALL
+[HTTP 请求]
+     ↓
+[AuditMiddleware / AuditService]
+     ↓
+[异步记录 AuditLog]
+  - event_type: login, document.upload, chat.stream, etc.
+  - actor_id / actor_email
+  - organization_id / workspace_id
+  - resource_type / resource_id
+  - ip_address / user_agent
+  - status: SUCCESS / FAILED
 ```
 
-审计记录字段：
+- 仅具有 `audit:read` 权限的管理员可通过 `/api/v1/organizations/{id}/audit-logs` 端点调阅。
+
+---
+
+## 3. 推荐的目录规范与工程落地
 
 ```text
-id
-organization_id
-workspace_id
-user_id
-event_type
-resource_type
-resource_id
-ip_address
-user_agent
-payload
-created_at
+backend/
+├── app/
+│   ├── api/routes/          # 路由层：按业务域拆分（auth, organizations, workspaces, knowledge_bases, documents, chat, audit_logs）
+│   ├── core/                # 核心配置、安全（Argon2id, JWT）、异常定义
+│   ├── db/                  # 数据库连接、AsyncSession 依赖
+│   ├── models/              # SQLAlchemy 2.0 ORM 实体（User, Org, Workspace, Document, Chunk, ChatSession, AuditLog）
+│   ├── schemas/             # Pydantic v2 请求与响应数据契约
+│   └── services/            # 领域业务服务
+│       ├── agent/           # AgentRunner, ToolRegistry, BaseTool
+│       ├── chunking/        # ChonkieChunker, RecursiveCharacterChunker, BaseChunker 工厂
+│       ├── embeddings/      # OpenAI, Mock Embedding 提供者 (1024 维)
+│       ├── reranker/        # QwenRerankerProvider, MockRerankerProvider
+│       ├── llm/             # OpenAI, Mock LLM 提供者 (含思考标签防溢出)
+│       ├── parsers/         # PDF, DOCX, TXT/MD/JSON 解析器
+│       ├── pipeline/        # DocumentPipelineService 异步状态机
+│       ├── rag/             # SecureRAGRetriever (两阶段检索), PromptBuilder, RAGService
+│       ├── storage/         # LocalStorageService, S3StorageService
+│       ├── audit.py         # 结构化审计日志服务
+│       └── auth.py          # 认证、密码校验与 Token 轮转
+├── alembic/                 # 数据库迁移脚本
+└── pyproject.toml           # uv 现代化 Python 项目依赖与配置
 ```
-
-## 3. 技术栈选型
-
-- 后端框架：Python 3.12 + FastAPI + Pydantic v2
-- 前端框架：Vite + React 19 + TypeScript + Tailwind CSS + Lucide Icons + React Router DOM
-- ORM 与数据库：SQLAlchemy 2.x (Async) + asyncpg + PostgreSQL 16 + pgvector
-- 数据库迁移：Alembic (迁移版本升级至 `0004_audit_logs`)
-- 文档解析：`pypdf` (PDF), `python-docx` (DOCX)
-- 向量计算与切块：Numpy, `RecursiveCharacterChunker`
-- 认证与加密：PyJWT, `pwdlib[argon2]`
-- 对象存储：`LocalStorageService` & `S3StorageService` (AWS S3 / MinIO 兼容驱动)
-- 容器编排：Docker & Docker Compose
-- 测试体系：Pytest + `pytest-asyncio` + `httpx` (支持内存 SQLite 与无依赖测试)
 
 ## 4. 安全设计基线
 
@@ -311,20 +262,21 @@ created_at
 
 - [x] **第一阶段：Python SaaS 后端基石** (用户、组织、工作区、JWT、RBAC、Compose)
 - [x] **第二阶段：文档管道、向量化与向量存储** (解析、切块、OpenAI/Mock Embeddings、PGVector、BackgroundTasks)
-- [x] **第三阶段：Secure RAG、检索与问答** (Query 改写、Top-K、安全过滤、防注入 Prompt 构造、引用输出、SSE 流式推送)
+- [x] **第三阶段：Secure RAG、检索与问答** (Query 改写、两阶段检索、Qwen Reranker 精排、防注入 Prompt 构造、引用输出、SSE 流式推送)
 - [x] **第四阶段：Agent 与工具集成** (Tool Registry、Function Calling 循环驱动、知识库搜索工具、工单集成、SSE 工具流式推流)
 - [x] **第五阶段：React SaaS UI** (管理后台、聊天界面、知识库预览、成员权限)
 - [x] **第六阶段：企业安全审计加固与生产上线** (审计查询 API 与前端视图、S3/MinIO 存储驱动、全链路回归验证)
+- [x] **增强阶段：Chonkie 智能分块与三模型矩阵闭环** (Chonkie 语义切片接入、Qwen3 1024 维向量模型、Qwen3 Reranker、Qwen3.5 4B LLM)
 
-## 6. 已验证实现 (Phase 1 ~ Phase 6 交付基线)
+## 6. 已验证实现与运行指令
 
 ### 实际工程目录
 
-- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型、存储、解析器、LLM 及 Agent 运行环境、审计日志服务。
+- `backend/app`：FastAPI 应用、API 路由、Schema、服务、模型、存储、解析器、Chonkie 分块器、Reranker、LLM 及 Agent 运行环境、审计日志服务。
 - `backend/alembic`：Alembic 迁移脚本（`0001_initial_schema`, `0002_knowledge_and_documents`, `0003_chat_and_rag`, `0004_audit_logs`）。
-- `frontend/`：Vite + React 19 + TypeScript + Tailwind CSS 控制台（仪表盘、知识库、切块预览、SSE 聊天、成员管理、审计日志）。
+- `frontend/`：Vite + React + TypeScript + Tailwind CSS 控制台（仪表盘、知识库、切块预览、SSE 聊天、成员管理、审计日志）。
 - `bruno/`：全套 HTTP 接口集合（`00-Health` 至 `09-Audit`）。
-- `tests`：租户隔离、RBAC、管道流转、分块、向量库、数据库合约、Secure RAG 检索问答、Agent 工具编排、安全审计轨迹与 S3 存储驱动等全套 138 项测试。
+- `tests`：租户隔离、RBAC、管道流转、Chonkie 分块、向量库、数据库合约、Secure RAG 检索问答、Rerank 打分、Agent 工具编排、安全审计轨迹与 S3 存储驱动等全套 170 项测试。
 - `docs/diagrams`：独立可视化工程图谱（认证时序、数据库 ER、文档管道、RAG & Agent 生命周期）。
 - `docs/ENGINEERING_DESIGN.md`：完整工程设计全景文档。
 - `compose.yaml`、`Dockerfile`、`.env.example`：本地与容器化运行配置。
@@ -358,4 +310,4 @@ npm run build
 ```bash
 uv run pytest
 ```
-- 全部 138 个测试秒级 PASS (100%)。
+- 全部 170 个测试秒级 PASS (100%)。

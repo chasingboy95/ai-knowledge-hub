@@ -212,7 +212,9 @@ class RAGService:
 
         # 5. Stream LLM generation
         full_assistant_content: list[str] = []
-        async for token in self.llm_provider.stream_generate(prompt_messages, **llm_kwargs):
+        async for token in self.llm_provider.stream_generate(
+            prompt_messages, **llm_kwargs
+        ):
             full_assistant_content.append(token)
             yield {
                 "event": "token",

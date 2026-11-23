@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
+
 from backend.app.services.reranker.base import BaseRerankerProvider
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ class QwenRerankerProvider(BaseRerankerProvider):
                 if resp.status_code == 200:
                     data = resp.json()
                     results = data.get("results") or data.get("data") or []
-                    reranked: list["RetrievedChunk"] = []
+                    reranked: list[RetrievedChunk] = []
                     for item in results:
                         idx = item.get("index")
                         score = float(item.get("relevance_score", 0.0))
@@ -152,7 +153,7 @@ class QwenRerankerProvider(BaseRerankerProvider):
             ]
             scores = await asyncio.gather(*tasks, return_exceptions=True)
 
-            scored_pairs: list[tuple["RetrievedChunk", float]] = []
+            scored_pairs: list[tuple[RetrievedChunk, float]] = []
             for c, score in zip(chunks, scores):
                 if isinstance(score, Exception):
                     final_score = c.similarity

@@ -14,4 +14,3 @@ class BaseRerankerProvider(ABC):
         top_k: int = 5,
     ) -> list["RetrievedChunk"]:
         """Rerank candidate chunks according to relevance to the query."""
-        pass

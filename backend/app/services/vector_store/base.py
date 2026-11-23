@@ -26,12 +26,10 @@ class VectorStore(ABC):
     @abstractmethod
     async def upsert(self, records: list[VectorRecord]) -> None:
         """Insert or update vector records."""
-        pass
 
     @abstractmethod
     async def delete_by_document(self, document_id: str) -> None:
         """Delete all vector records associated with a given document."""
-        pass
 
     @abstractmethod
     async def search(
@@ -41,4 +39,3 @@ class VectorStore(ABC):
         top_k: int = 5,
     ) -> list[SearchResult]:
         """Search top_k records matching the given filters (e.g. organization_id)."""
-        pass

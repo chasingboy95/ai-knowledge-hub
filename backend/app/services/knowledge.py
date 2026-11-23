@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.app.models.document import Document, DocumentChunk, DocumentStatus
+from backend.app.models.document import Document, DocumentStatus
 from backend.app.models.knowledge import KnowledgeBase
 from backend.app.models.user import User
 from backend.app.models.workspace import Workspace

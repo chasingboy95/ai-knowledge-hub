@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.rbac import Permission, Role, RolePermission
 
-
 PERMISSION_CODES = (
     "knowledge:create",
     "knowledge:read",

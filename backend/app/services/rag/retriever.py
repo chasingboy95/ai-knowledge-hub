@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
@@ -71,7 +71,9 @@ class SecureRAGRetriever:
             return []
 
         # 1. Validate knowledge bases belong to this workspace
-        query_kbs = select(KnowledgeBase.id).where(KnowledgeBase.workspace_id == workspace_id)
+        query_kbs = select(KnowledgeBase.id).where(
+            KnowledgeBase.workspace_id == workspace_id
+        )
         if knowledge_base_ids:
             query_kbs = query_kbs.where(KnowledgeBase.id.in_(knowledge_base_ids))
 
@@ -86,13 +88,17 @@ class SecureRAGRetriever:
 
         # 3. Search vector store
         # If reranker is present, retrieve a larger candidate pool
-        search_top_k = max(top_k * 3, self.candidate_top_k) if self.reranker else top_k * 2
+        search_top_k = (
+            max(top_k * 3, self.candidate_top_k) if self.reranker else top_k * 2
+        )
         store = self._resolve_vector_store(session)
         filters = {
             "workspace_id": str(workspace_id),
             "knowledge_base_ids": [str(kid) for kid in allowed_kb_ids],
         }
-        raw_results = await store.search(query_vector=query_vector, filters=filters, top_k=search_top_k)
+        raw_results = await store.search(
+            query_vector=query_vector, filters=filters, top_k=search_top_k
+        )
 
         if not raw_results:
             return []
