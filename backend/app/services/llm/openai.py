@@ -11,7 +11,7 @@ class OpenAILLMProvider(BaseLLMProvider):
     def __init__(
         self,
         api_key: str | None,
-        model: str = "gpt-4o-mini",
+        model: str = "qwen3.5-4b-mlx",
         base_url: str = "https://api.openai.com/v1",
         temperature: float = 0.4,
         max_tokens: int = 2048,
@@ -57,6 +57,10 @@ class OpenAILLMProvider(BaseLLMProvider):
             choice = data["choices"][0]
             msg = choice.get("message", {})
             content = msg.get("content") or ""
+            # Fallback for reasoning models where content might be empty but reasoning_content is populated
+            if not content and msg.get("reasoning_content"):
+                content = msg["reasoning_content"]
+
             tokens = data.get("usage", {}).get("total_tokens")
 
             tool_calls = []
@@ -101,6 +105,9 @@ class OpenAILLMProvider(BaseLLMProvider):
         if tools:
             payload["tools"] = tools
 
+        yielded_content_token = False
+        reasoning_fallback: list[str] = []
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
@@ -116,6 +123,14 @@ class OpenAILLMProvider(BaseLLMProvider):
                         delta = chunk_json["choices"][0].get("delta", {})
                         delta_content = delta.get("content")
                         if delta_content:
+                            yielded_content_token = True
                             yield delta_content
+                        elif not yielded_content_token and delta.get("reasoning_content"):
+                            reasoning_fallback.append(delta["reasoning_content"])
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
+
+        # If model exhausted tokens within reasoning and generated no content, yield reasoning
+        if not yielded_content_token and reasoning_fallback:
+            for piece in reasoning_fallback:
+                yield piece

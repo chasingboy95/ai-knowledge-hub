@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 from uuid import UUID
 
 from sqlalchemy import select
@@ -7,8 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.document import Document, DocumentStatus
 from backend.app.models.knowledge import KnowledgeBase
 from backend.app.services.embeddings.base import EmbeddingProvider
+from backend.app.services.reranker.base import BaseRerankerProvider
 from backend.app.services.vector_store import get_vector_store
 from backend.app.services.vector_store.base import VectorStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +25,7 @@ class RetrievedChunk:
     page_number: int | None
     similarity: float
     content: str
+    rerank_score: float | None = None
 
 
 class SecureRAGRetriever:
@@ -28,9 +33,13 @@ class SecureRAGRetriever:
         self,
         embedding_provider: EmbeddingProvider,
         vector_store: VectorStore | None = None,
+        reranker: BaseRerankerProvider | None = None,
+        candidate_top_k: int = 15,
     ):
         self.embedding_provider = embedding_provider
         self.vector_store = vector_store
+        self.reranker = reranker
+        self.candidate_top_k = candidate_top_k
 
     def _resolve_vector_store(self, session: AsyncSession) -> VectorStore:
         return self.vector_store or get_vector_store(session)
@@ -56,7 +65,7 @@ class SecureRAGRetriever:
         min_similarity: float = 0.3,
         conversation_history: list[dict[str, str]] | None = None,
     ) -> list[RetrievedChunk]:
-        """Secure retrieval with workspace boundary checks and threshold filtering."""
+        """Secure retrieval with workspace boundary checks, threshold filtering, and optional rerank."""
         rewritten_query = await self.rewrite_query(query, conversation_history)
         if not rewritten_query:
             return []
@@ -76,12 +85,14 @@ class SecureRAGRetriever:
         query_vector = await self.embedding_provider.embed_query(rewritten_query)
 
         # 3. Search vector store
+        # If reranker is present, retrieve a larger candidate pool
+        search_top_k = max(top_k * 3, self.candidate_top_k) if self.reranker else top_k * 2
         store = self._resolve_vector_store(session)
         filters = {
             "workspace_id": str(workspace_id),
             "knowledge_base_ids": [str(kid) for kid in allowed_kb_ids],
         }
-        raw_results = await store.search(query_vector=query_vector, filters=filters, top_k=top_k * 2)
+        raw_results = await store.search(query_vector=query_vector, filters=filters, top_k=search_top_k)
 
         if not raw_results:
             return []
@@ -94,24 +105,17 @@ class SecureRAGRetriever:
             Document.status == DocumentStatus.READY.value,
         )
         doc_res = await session.execute(doc_query)
-        rows = doc_res.all()
-        print("RETRIEVER DEBUG doc rows:", rows, "doc_ids requested:", doc_ids)
-        ready_docs = {row.id: row.filename for row in rows}
+        ready_docs = {row.id: row.filename for row in doc_res.all()}
 
         # 5. Filter by ready docs and min_similarity
-        chunks: list[RetrievedChunk] = []
+        candidate_chunks: list[RetrievedChunk] = []
         for r in raw_results:
             d_id = UUID(r.record.document_id)
-            print("RETRIEVER DEBUG checking raw_result:", d_id, "score:", r.score, "min_sim:", min_similarity)
-            if d_id not in ready_docs:
-                print("RETRIEVER DEBUG d_id not in ready_docs")
-                continue
-            if r.score < min_similarity:
-                print("RETRIEVER DEBUG score < min_similarity")
+            if d_id not in ready_docs or r.score < min_similarity:
                 continue
 
             metadata = r.record.metadata or {}
-            chunks.append(
+            candidate_chunks.append(
                 RetrievedChunk(
                     chunk_id=UUID(r.record.chunk_id),
                     document_id=d_id,
@@ -124,7 +128,19 @@ class SecureRAGRetriever:
                 )
             )
 
-            if len(chunks) >= top_k:
+            # If no reranker, stop at top_k
+            if not self.reranker and len(candidate_chunks) >= top_k:
                 break
 
-        return chunks
+        if not candidate_chunks:
+            return []
+
+        # 6. Apply Reranking if configured
+        if self.reranker is not None and len(candidate_chunks) > 0:
+            return await self.reranker.rerank(
+                query=rewritten_query,
+                chunks=candidate_chunks,
+                top_k=top_k,
+            )
+
+        return candidate_chunks[:top_k]

@@ -14,6 +14,7 @@ from backend.app.services.llm import get_llm_provider
 from backend.app.services.llm.base import BaseLLMProvider
 from backend.app.services.rag.prompt_builder import PromptBuilder
 from backend.app.services.rag.retriever import RetrievedChunk, SecureRAGRetriever
+from backend.app.services.reranker import get_reranker_provider
 from backend.app.services.vector_store import get_vector_store
 
 
@@ -81,12 +82,26 @@ class RAGService:
                 ChatSession.workspace_id == workspace_id,
             )
         )
-        session = await db.scalar(stmt)
+        res = await db.execute(stmt)
+        session = res.scalar_one_or_none()
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
         if session.user:
             session.user_email = session.user.email
             session.user_full_name = session.user.full_name
+        return session
+
+    async def update_session_title(
+        self,
+        db: AsyncSession,
+        workspace_id: UUID,
+        session_id: UUID,
+        title: str,
+    ) -> ChatSession:
+        session = await self.get_session(db, workspace_id, session_id)
+        session.title = title
+        await db.commit()
+        await db.refresh(session)
         return session
 
     async def delete_session(
@@ -118,14 +133,17 @@ class RAGService:
     def _format_citations(self, chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
         citations = []
         for c in chunks:
-            citations.append({
+            item = {
                 "document_id": str(c.document_id),
                 "document_title": c.document_title,
                 "chunk_index": c.chunk_index,
                 "page_number": c.page_number,
                 "similarity": round(c.similarity, 4),
                 "text_snippet": c.content[:200],
-            })
+            }
+            if c.rerank_score is not None:
+                item["rerank_score"] = round(c.rerank_score, 4)
+            citations.append(item)
         return citations
 
     async def stream_chat(
@@ -236,6 +254,11 @@ class RAGService:
 
 def get_rag_service(settings: Settings) -> RAGService:
     embedding_provider = get_embedding_provider(settings)
-    retriever = SecureRAGRetriever(embedding_provider=embedding_provider)
+    reranker = get_reranker_provider(settings)
+    retriever = SecureRAGRetriever(
+        embedding_provider=embedding_provider,
+        reranker=reranker,
+        candidate_top_k=settings.reranker_candidate_top_k,
+    )
     llm_provider = get_llm_provider(settings)
     return RAGService(retriever=retriever, llm_provider=llm_provider)

@@ -1,17 +1,9 @@
-from dataclasses import dataclass, field
-from typing import Any
+
+from backend.app.services.chunking.base import BaseChunker, TextChunk
 from backend.app.services.parsers.base import ParsedDocument
 
 
-@dataclass
-class TextChunk:
-    chunk_index: int
-    content: str
-    token_count: int
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-class RecursiveCharacterChunker:
+class RecursiveCharacterChunker(BaseChunker):
     def __init__(
         self,
         chunk_size: int = 800,
@@ -83,7 +75,9 @@ class RecursiveCharacterChunker:
                         else:
                             break
                     current_chunk = overlap_chunk
-                    current_len = sum(len(x) for x in current_chunk) + max(0, len(current_chunk) - 1) * len(sep)
+                    current_len = sum(len(x) for x in current_chunk) + max(
+                        0, len(current_chunk) - 1
+                    ) * len(sep)
 
                 current_chunk.append(s)
                 current_len += (len(sep) if len(current_chunk) > 1 else 0) + len(s)

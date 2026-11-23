@@ -1,12 +1,13 @@
 import logging
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.session import get_session_factory
 from backend.app.models.document import Document, DocumentChunk, DocumentStatus
+from backend.app.services.chunking import BaseChunker, get_chunker
 from backend.app.services.chunking.recursive import RecursiveCharacterChunker
 from backend.app.services.embeddings import get_embedding_provider
 from backend.app.services.embeddings.base import EmbeddingProvider
@@ -24,7 +25,7 @@ class DocumentPipelineService:
     def __init__(
         self,
         storage_service: StorageService,
-        chunker: RecursiveCharacterChunker,
+        chunker: BaseChunker | RecursiveCharacterChunker,
         embedding_provider: EmbeddingProvider,
         vector_store: VectorStore | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -166,7 +167,7 @@ class DocumentPipelineService:
 def get_default_pipeline(settings: Settings | None = None) -> DocumentPipelineService:
     cfg = settings or get_settings()
     storage = LocalStorageService(base_dir=cfg.storage_dir)
-    chunker = RecursiveCharacterChunker(chunk_size=800, chunk_overlap=100)
+    chunker = get_chunker(cfg)
     embedder = get_embedding_provider(cfg)
     return DocumentPipelineService(
         storage_service=storage,

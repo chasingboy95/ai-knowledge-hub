@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import Any
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,23 +22,46 @@ class Settings(BaseSettings):
     s3_secret_key: str | None = None
     s3_region: str = "us-east-1"
 
+    # Chunking Settings
+    chunking_provider: str = "chonkie"  # "chonkie" | "native"
+    chunking_strategy: str = "sentence"  # "sentence" | "recursive" | "token"
+    chunk_size: int = 512
+    chunk_overlap: int = 64
+
     # Embedding Settings
     embedding_provider: str = "mock"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "qwen3-embedding-0.6b-dwq"
     embedding_dimension: int = 1536
 
     # LLM Settings
     llm_provider: str = "mock"  # "mock" | "openai"
     llm_base_url: str | None = None
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "qwen3.5-4b-mlx"
     llm_temperature: float = 0.4
     llm_max_tokens: int = 2048
     llm_frequency_penalty: float = 0.5
     llm_presence_penalty: float = 0.3
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Reranker Settings
+    reranker_provider: str = "mock"  # "mock" | "openai" | "qwen"
+    reranker_base_url: str | None = None
+    reranker_api_key: str | None = None
+    reranker_model: str = "qwen3-reranker-0.6b"
+    reranker_enabled: bool = True
+    reranker_candidate_top_k: int = 15
+    reranker_top_k: int = 5
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+    )
+
+    def __init__(self, **values: Any):
+        if "PYTEST_CURRENT_TEST" in os.environ and "_env_file" not in values:
+            values["_env_file"] = None
+        super().__init__(**values)
 
     @model_validator(mode="after")
     def validate_jwt_secret(self) -> "Settings":
