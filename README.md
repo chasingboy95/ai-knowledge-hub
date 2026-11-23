@@ -39,25 +39,46 @@
 
 ## 🏗️ 架构概览
 
-```text
-[用户界面 / React SPA (Vite + Tailwind + Lucide)]
-                  │
-                  ▼ HTTP / SSE (EventStream)
-[API 网关 / FastAPI 异步服务]
-      ├── 身份认证与多租户权限校验 (JWT / RBAC)
-      ├── 文档管理与解析引擎 (PDF / DOCX / TXT / MD)
-      ├── Chonkie 智能分块器 (Sentence / Recursive / Token)
-      ├── 两阶段 RAG 检索管线:
-      │     1. 初筛: PGVector Cosine 相似度 (Top-K 候选集)
-      │     2. 精排: Qwen Reranker Cross-Encoder 评分
-      └── 对话会话与上下文组装 (PromptBuilder & SSE Stream)
-                  │
-        ┌─────────┴──────────────────────┐
-        ▼                                ▼
-[PostgreSQL 16 + pgvector]   [本地/云端模型服务 (LM Studio / Ollama)]
-  - document_chunks (1024 维)   - Embedding: text-embedding-qwen3-embedding-0.6b
-  - HNSW 索引极速召回            - Reranker:  qwen3-reranker-0.6b
-  - 组织/工作区隔离元数据         - LLM:       qwen3.5-4b-mlx
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["客户端层 (Client Layer)"]
+        WebClient["React SPA 控制台<br/>(Vite + TS + Tailwind CSS)"]
+    end
+
+    subgraph APILayer ["网关与核心服务层 (FastAPI Gateway)"]
+        AuthService["身份认证与细粒度 RBAC<br/>(JWT / Token 轮转 / 组织隔离)"]
+        DocService["文档解析与管道<br/>(PDF / DOCX / TXT / MD)"]
+        Chunker["Chonkie 智能分块引擎<br/>(Sentence / Recursive / Token)"]
+        RAGPipeline["两阶段检索管线 (Two-Stage RAG)<br/>向量初筛 + Cross-Encoder 精排"]
+        ChatEngine["对话与上下文生成<br/>(SSE 流式推送 / 引用溯源卡片)"]
+    end
+
+    subgraph StorageLayer ["数据持久化层 (Storage & Database)"]
+        PostgresDB[("PostgreSQL 16 (关系元数据)<br/>组织/工作区/成员/审计日志")]
+        PGVector[("pgvector 向量库<br/>vector(1024) + HNSW 索引")]
+        StorageDisk[("本地 / S3 对象存储<br/>(多租户隔离原始文件)")]
+    end
+
+    subgraph ModelMatrix ["本地/云端模型矩阵 (LM Studio / Ollama)"]
+        EmbedModel["Embedding: Qwen3-Embedding-0.6b<br/>(1024 维 GGUF 向量模型)"]
+        RerankModel["Reranker: Qwen3-Reranker-0.6b<br/>(Cross-Encoder 语义精排打分)"]
+        LLMModel["LLM: Qwen3.5-4B-MLX<br/>(流式推理 / 深度思考过滤)"]
+    end
+
+    WebClient -->|HTTP REST / SSE Stream| APILayer
+    APILayer --> AuthService
+    AuthService --> PostgresDB
+    DocService --> StorageDisk
+    DocService --> Chunker
+    Chunker -->|文本切片| EmbedModel
+    EmbedModel -->|1024维向量| PGVector
+
+    ChatEngine --> RAGPipeline
+    RAGPipeline -->|1. 向量粗筛 Top-15| PGVector
+    RAGPipeline -->|2. 候选切片 Cross-Encoder 精排| RerankModel
+    RAGPipeline -->|Top-5 高相关上下文| ChatEngine
+    ChatEngine -->|Prompt + 历史窗口| LLMModel
+    LLMModel -->|SSE 流式 Token| WebClient
 ```
 
 ---
